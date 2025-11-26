@@ -1,63 +1,91 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import {
+/* eslint-disable no-unused-vars */
+import React, { useState, useCallback, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
   Mail,
-  Phone,
-  Lock,
+  MessageCircle, 
+  Users, 
+  Shield, 
+  ChevronLeft, 
+  ChevronRight, 
+  AlertCircle,
   Eye,
   EyeOff,
-  Send,
-  CheckCircle,
-  MessageCircle,
-  Users,
-  Shield,
-  Zap,
-  Heart,
-  Star,
-  ChevronLeft,
-  ChevronRight,
-  ArrowRight,
-  Smartphone,
-  AlertCircle,
-} from "lucide-react";
-import { useTheme } from "../context/ThemeContext";
-import { uploadToCloudinary } from "../utils/cloudinary";
+  Lock,
+  Phone,
+  ArrowRight
+} from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
+import Logo from './Logo';
+import GoogleSignupComplete from './GoogleSignupComplete.jsx';
 
-// Import SVG assets
-import schedulingIcon from "../assets/scheduling.svg";
-import projectIcon from "../assets/project.svg";
-import screenIcon from "../assets/screen.svg";
-
-// API Base URL from environment variable
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
-// Features data for carousel
+// Use the full `GoogleSignupComplete` component from its file (imported above)
+
+// Mock Cloudinary upload
+const uploadToCloudinary = async (file) => {
+  return new Promise((resolve) => {
+    setTimeout(() => resolve("https://via.placeholder.com/150"), 1000);
+  });
+};
+
+const GoogleLoginButton = ({ onSuccess, onError }) => {
+  useEffect(() => {
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    document.body.appendChild(script);
+    
+    script.onload = () => {
+      window.google?.accounts.id.initialize({
+        client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
+        callback: onSuccess,
+      });
+      
+      window.google?.accounts.id.renderButton(
+        document.getElementById('googleLoginButton'),
+        { 
+          theme: 'outline',
+          size: 'large',
+          width: '100%',
+          text: 'continue_with'
+        }
+      );
+    };
+    
+    return () => {
+      if (document.body.contains(script)) {
+        document.body.removeChild(script);
+      }
+    };
+  }, [onSuccess]);
+  
+  return <div id="googleLoginButton"></div>;
+};
+
+// Features data
 const appFeatures = [
   {
     id: 1,
     title: "Message Scheduling",
-    description:
-      "Schedule your messages to be sent at the perfect time, ensuring timely communication",
+    description: "Schedule your messages to be sent at the perfect time, ensuring timely communication",
     icon: MessageCircle,
-    image: <img src={schedulingIcon} alt="Message Scheduling" className="w-8 h-8" />,
     color: "from-blue-500 to-cyan-500",
   },
   {
     id: 2,
     title: "Collaborative Project Discussion",
-    description:
-      "Discuss project ideas with integrated documentation and real-time collaboration tools",
+    description: "Discuss project ideas with integrated documentation and real-time collaboration tools",
     icon: Users,
-    image: <img src={projectIcon} alt="Project Discussion" className="w-8 h-8" />,
     color: "from-purple-500 to-pink-500",
   },
   {
     id: 3,
     title: "Screenshot Detection",
-    description:
-      "Automatically detect and organize screenshots for easy reference and sharing",
+    description: "Automatically detect and organize screenshots for easy reference and sharing",
     icon: Shield,
-    image: <img src={screenIcon} alt="Screenshot Detection" className="w-8 h-8" />,
     color: "from-green-500 to-emerald-500",
   },
 ];
@@ -78,21 +106,19 @@ const FeatureCarousel = ({ currentTheme }) => {
   }, []);
 
   const prevSlide = useCallback(() => {
-    setCurrentSlide(
-      (prev) => (prev - 1 + appFeatures.length) % appFeatures.length
-    );
+    setCurrentSlide((prev) => (prev - 1 + appFeatures.length) % appFeatures.length);
   }, []);
 
   return (
-    <div className="relative h-full flex flex-col items-center justify-center px-12 py-8 xl:px-24 2xl:px-32">
+    <div className="relative h-full flex flex-col items-center justify-start pt-16 px-12 py-8 xl:px-24 2xl:px-32">
       <div className="mb-8 text-center max-w-lg mx-auto">
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
-          className={`w-16 h-16 rounded-full ${currentTheme.accent} mx-auto mb-6 flex items-center justify-center`}
+          className="mx-auto mb-6 flex items-center justify-center"
         >
-          <MessageCircle className="w-8 h-8 text-white" />
+          <Logo size="lg" showText={false} />
         </motion.div>
         <motion.h1
           initial={{ opacity: 0, y: -20 }}
@@ -124,17 +150,13 @@ const FeatureCarousel = ({ currentTheme }) => {
             className={`${currentTheme.secondary} rounded-2xl p-6 ${currentTheme.shadow} border ${currentTheme.border} min-h-[200px]`}
           >
             <div className="text-center h-full flex flex-col justify-center">
-              <div
-                className={`w-16 h-16 rounded-full bg-gradient-to-br ${appFeatures[currentSlide].color} mx-auto mb-4 flex items-center justify-center`}
-              >
-                {appFeatures[currentSlide].image}
+              <div className={`w-16 h-16 rounded-full bg-gradient-to-br ${appFeatures[currentSlide].color} mx-auto mb-4 flex items-center justify-center`}>
+                {React.createElement(appFeatures[currentSlide].icon, { className: "w-8 h-8 text-white" })}
               </div>
               <h3 className={`text-xl font-semibold mb-2 ${currentTheme.text}`}>
                 {appFeatures[currentSlide].title}
               </h3>
-              <p
-                className={`${currentTheme.textSecondary} text-sm leading-relaxed`}
-              >
+              <p className={`${currentTheme.textSecondary} text-sm leading-relaxed`}>
                 {appFeatures[currentSlide].description}
               </p>
             </div>
@@ -163,7 +185,7 @@ const FeatureCarousel = ({ currentTheme }) => {
             className={`w-3 h-3 rounded-full transition-all duration-200 hover:scale-110 ${
               index === currentSlide
                 ? currentTheme.accent + " shadow-md"
-                : `bg-gray-400 hover:bg-gray-300 opacity-70 hover:opacity-100`
+                : "bg-gray-400 hover:bg-gray-300 opacity-70 hover:opacity-100"
             }`}
           />
         ))}
@@ -196,7 +218,7 @@ const ErrorAlert = ({ message, onClose }) => {
 };
 
 // Login Form Component
-const LoginForm = ({ currentTheme, onLogin }) => {
+const LoginForm = ({ currentTheme, onLogin, onGoogleNewUser }) => {
   const [formData, setFormData] = useState({
     emailOrPhone: "",
     password: "",
@@ -204,6 +226,48 @@ const LoginForm = ({ currentTheme, onLogin }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const handleGoogleLogin = useCallback(
+    async (googleResponse) => {
+      setError("");
+      setIsLoading(true);
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/auth/google`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ idToken: googleResponse.credential }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.message || "Google login failed");
+        }
+
+        // If backend indicates this is a new user, let parent show completion form
+        if (data.isNewUser) {
+          onGoogleNewUser?.({
+            email: data.email || data.googleData?.email,
+            name: data.name || data.googleData?.name,
+            avatar: data.avatar || data.googleData?.picture || data.googleData?.avatar,
+            raw: data,
+          });
+          return;
+        }
+
+        localStorage.setItem('userInfo', JSON.stringify(data.user || data));
+        localStorage.setItem('token', data.token || data.accessToken || "");
+        onLogin?.(data);
+      } catch (err) {
+        setError(err.message || "Google login failed. Try again.");
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [onLogin, onGoogleNewUser]
+  );
 
   const handleSubmit = useCallback(
     async (e) => {
@@ -253,15 +317,19 @@ const LoginForm = ({ currentTheme, onLogin }) => {
         {error && <ErrorAlert message={error} onClose={() => setError("")} />}
       </AnimatePresence>
 
-      {/* Email or Phone Input */}
+      <div>
+        <GoogleLoginButton 
+          onSuccess={handleGoogleLogin} 
+          onError={(err) => setError(err?.message || "Google Sign-in error")} 
+        />
+      </div>
+
       <div className="space-y-2">
         <label className={`block text-sm font-medium ${currentTheme.text}`}>
           Email or Phone Number
         </label>
         <div className="relative">
-          <div
-            className={`absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none ${currentTheme.textSecondary}`}
-          >
+          <div className={`absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none ${currentTheme.textSecondary}`}>
             <Mail className="h-5 w-5" />
           </div>
           <input
@@ -277,15 +345,12 @@ const LoginForm = ({ currentTheme, onLogin }) => {
         </div>
       </div>
 
-      {/* Password Input */}
       <div className="space-y-2">
         <label className={`block text-sm font-medium ${currentTheme.text}`}>
           Password
         </label>
         <div className="relative">
-          <div
-            className={`absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none ${currentTheme.textSecondary}`}
-          >
+          <div className={`absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none ${currentTheme.textSecondary}`}>
             <Lock className="h-5 w-5" />
           </div>
           <input
@@ -303,16 +368,11 @@ const LoginForm = ({ currentTheme, onLogin }) => {
             onClick={() => setShowPassword(!showPassword)}
             className={`absolute inset-y-0 right-0 pr-3 flex items-center ${currentTheme.textSecondary} hover:${currentTheme.text} transition-colors`}
           >
-            {showPassword ? (
-              <EyeOff className="h-5 w-5" />
-            ) : (
-              <Eye className="h-5 w-5" />
-            )}
+            {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
           </button>
         </div>
       </div>
 
-      {/* Remember Me & Forgot Password */}
       <div className="flex items-center justify-between">
         <label className="flex items-center">
           <input
@@ -331,13 +391,12 @@ const LoginForm = ({ currentTheme, onLogin }) => {
         </button>
       </div>
 
-      {/* Submit Button */}
       <motion.button
         type="submit"
         disabled={isLoading}
         whileHover={{ scale: 1.02 }}
         whileTap={{ scale: 0.98 }}
-        className={`w-full py-3 px-4 rounded-lg font-semibold text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 focus:ring-4 focus:ring-blue-200 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2`}
+        className="w-full py-3 px-4 rounded-lg font-semibold text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 focus:ring-4 focus:ring-blue-200 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
       >
         {isLoading ? (
           <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -441,7 +500,6 @@ const SignupForm = ({ currentTheme, onSignup }) => {
         {error && <ErrorAlert message={error} onClose={() => setError("")} />}
       </AnimatePresence>
 
-      {/* Name Input */}
       <div className="space-y-2">
         <label className={`block text-sm font-medium ${currentTheme.text}`}>
           Full Name
@@ -458,15 +516,12 @@ const SignupForm = ({ currentTheme, onSignup }) => {
         />
       </div>
 
-      {/* Email Input */}
       <div className="space-y-2">
         <label className={`block text-sm font-medium ${currentTheme.text}`}>
           Email Address
         </label>
         <div className="relative">
-          <div
-            className={`absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none ${currentTheme.textSecondary}`}
-          >
+          <div className={`absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none ${currentTheme.textSecondary}`}>
             <Mail className="h-5 w-5" />
           </div>
           <input
@@ -482,7 +537,6 @@ const SignupForm = ({ currentTheme, onSignup }) => {
         </div>
       </div>
 
-      {/* Phone Number Input */}
       <div className="space-y-2">
         <label className={`block text-sm font-medium ${currentTheme.text}`}>
           Phone Number
@@ -499,15 +553,12 @@ const SignupForm = ({ currentTheme, onSignup }) => {
         />
       </div>
 
-      {/* Password Input */}
       <div className="space-y-2">
         <label className={`block text-sm font-medium ${currentTheme.text}`}>
           Password
         </label>
         <div className="relative">
-          <div
-            className={`absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none ${currentTheme.textSecondary}`}
-          >
+          <div className={`absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none ${currentTheme.textSecondary}`}>
             <Lock className="h-5 w-5" />
           </div>
           <input
@@ -525,24 +576,17 @@ const SignupForm = ({ currentTheme, onSignup }) => {
             onClick={() => setShowPassword(!showPassword)}
             className={`absolute inset-y-0 right-0 pr-3 flex items-center ${currentTheme.textSecondary} hover:${currentTheme.text} transition-colors`}
           >
-            {showPassword ? (
-              <EyeOff className="h-5 w-5" />
-            ) : (
-              <Eye className="h-5 w-5" />
-            )}
+            {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
           </button>
         </div>
       </div>
 
-      {/* Confirm Password Input */}
       <div className="space-y-2">
         <label className={`block text-sm font-medium ${currentTheme.text}`}>
           Confirm Password
         </label>
         <div className="relative">
-          <div
-            className={`absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none ${currentTheme.textSecondary}`}
-          >
+          <div className={`absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none ${currentTheme.textSecondary}`}>
             <Lock className="h-5 w-5" />
           </div>
           <input
@@ -563,11 +607,7 @@ const SignupForm = ({ currentTheme, onSignup }) => {
             onClick={() => setShowConfirmPassword(!showConfirmPassword)}
             className={`absolute inset-y-0 right-0 pr-3 flex items-center ${currentTheme.textSecondary} hover:${currentTheme.text} transition-colors`}
           >
-            {showConfirmPassword ? (
-              <EyeOff className="h-5 w-5" />
-            ) : (
-              <Eye className="h-5 w-5" />
-            )}
+            {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
           </button>
         </div>
         {formData.password &&
@@ -577,7 +617,6 @@ const SignupForm = ({ currentTheme, onSignup }) => {
           )}
       </div>
 
-      {/* Profile Picture Upload (Optional) */}
       <div className="space-y-2">
         <label className={`block text-sm font-medium ${currentTheme.text}`}>
           Profile Picture <span className="text-gray-400">(Optional)</span>
@@ -590,13 +629,12 @@ const SignupForm = ({ currentTheme, onSignup }) => {
         />
       </div>
 
-      {/* Submit Button */}
       <motion.button
         type="submit"
         disabled={isLoading}
         whileHover={{ scale: 1.02 }}
         whileTap={{ scale: 0.98 }}
-        className={`w-full py-3 px-4 rounded-lg font-semibold text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 focus:ring-4 focus:ring-blue-200 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2`}
+        className="w-full py-3 px-4 rounded-lg font-semibold text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 focus:ring-4 focus:ring-blue-200 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
       >
         {isLoading ? (
           <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -615,6 +653,44 @@ const SignupForm = ({ currentTheme, onSignup }) => {
 const AuthPage = ({ onAuthenticated }) => {
   const { currentTheme } = useTheme();
   const [isLogin, setIsLogin] = useState(true);
+  const [googleData, setGoogleData] = useState(null);
+  
+  const handleGoogleResponse = useCallback(async (response) => {
+    try {
+      const { credential } = response;
+      
+      const googleResponse = await fetch(`${API_BASE_URL}/api/auth/google`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ credential }),
+      });
+
+      const data = await googleResponse.json();
+
+      if (!googleResponse.ok) {
+        throw new Error(data.message || 'Google authentication failed');
+      }
+
+      if (data.isNewUser) {
+        // For new users, show the completion form
+        setGoogleData({
+          email: data.email,
+          name: data.name,
+          avatar: data.picture
+        });
+      } else {
+        // For existing users, proceed with login
+        localStorage.setItem('userInfo', JSON.stringify(data));
+        localStorage.setItem('token', data.token);
+        onAuthenticated?.(true, data);
+      }
+    } catch (error) {
+      console.error('Google auth error:', error);
+      alert(error.message || 'Failed to authenticate with Google');
+    }
+  }, [onAuthenticated]);
 
   const handleLogin = useCallback(
     (userData) => {
@@ -640,230 +716,235 @@ const AuthPage = ({ onAuthenticated }) => {
         }
         `}
       </style>
-
-      <div className={`min-h-screen flex ${currentTheme.primary} w-full`}>
-        {/* Left Side - Features Carousel */}
-        <div
-          className={`hidden lg:flex lg:w-1/2 ${currentTheme.primary} relative overflow-hidden`}
-        >
-          <FeatureCarousel currentTheme={currentTheme} />
-        </div>
-
-        {/* Right Side - Authentication Form */}
-        <div
-          className={`w-full lg:w-1/2 flex flex-col ${currentTheme.secondary}`}
-        >
-          {/* Toggle Header */}
-          <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-            <div
-              className={`flex rounded-lg p-1 ${currentTheme.searchBg} relative overflow-hidden`}
-            >
-              {/* Animated Background Slider */}
-              <motion.div
-                className={`absolute top-1 bottom-1 w-1/2 ${currentTheme.accent} rounded-md shadow-md`}
-                animate={{
-                  x: isLogin ? "0%" : "100%",
-                  transition: {
-                    type: "spring",
-                    stiffness: 300,
-                    damping: 30,
-                  },
-                }}
-              />
-
-              <motion.button
-                onClick={() => setIsLogin(true)}
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all duration-200 relative z-10 ${
-                  isLogin
-                    ? "text-white"
-                    : `${currentTheme.text} hover:${currentTheme.hover}`
-                }`}
-              >
-                <motion.span
-                  animate={{
-                    scale: isLogin ? 1.05 : 1,
-                    transition: { duration: 0.2 },
-                  }}
-                >
-                  Sign In
-                </motion.span>
-              </motion.button>
-
-              <motion.button
-                onClick={() => setIsLogin(false)}
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all duration-200 relative z-10 ${
-                  !isLogin
-                    ? "text-white"
-                    : `${currentTheme.text} hover:${currentTheme.hover}`
-                }`}
-              >
-                <motion.span
-                  animate={{
-                    scale: !isLogin ? 1.05 : 1,
-                    transition: { duration: 0.2 },
-                  }}
-                >
-                  Sign Up
-                </motion.span>
-              </motion.button>
-            </div>
+      
+      {googleData ? (
+        <GoogleSignupComplete 
+          googleData={googleData}
+          currentTheme={currentTheme}
+          onBack={() => setGoogleData(null)}
+          onSuccess={(userData) => {
+            setGoogleData(null);
+            onAuthenticated?.(true, userData);
+          }}
+        />
+      ) : (
+        <div className={`min-h-screen flex ${currentTheme.primary} w-full`}>
+          <div className={`hidden lg:flex lg:w-1/2 ${currentTheme.primary} relative overflow-hidden`}>
+            <FeatureCarousel currentTheme={currentTheme} />
           </div>
 
-          {/* Form Content */}
-          <div className="flex-1 flex items-center justify-center p-6 overflow-y-auto">
-            <div className="w-full max-w-md">
-              <div className="text-center mb-8 overflow-hidden">
+          <div className={`w-full lg:w-1/2 flex flex-col ${currentTheme.secondary}`}>
+            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+              <div className={`flex rounded-lg p-1 ${currentTheme.searchBg} relative overflow-hidden`}>
                 <motion.div
-                  key={isLogin ? "login-header" : "signup-header"}
-                  initial={{
-                    opacity: 0,
-                    y: 30,
-                    rotateX: -15,
-                    scale: 0.9,
-                  }}
+                  className={`absolute top-1 bottom-1 w-1/2 ${currentTheme.accent} rounded-md shadow-md`}
                   animate={{
-                    opacity: 1,
-                    y: 0,
-                    rotateX: 0,
-                    scale: 1,
+                    x: isLogin ? "0%" : "100%",
+                    transition: {
+                      type: "spring",
+                      stiffness: 300,
+                      damping: 30,
+                    },
                   }}
-                  exit={{
-                    opacity: 0,
-                    y: -30,
-                    rotateX: 15,
-                    scale: 0.9,
-                  }}
-                  transition={{
-                    duration: 0.5,
-                    type: "spring",
-                    stiffness: 200,
-                    damping: 20,
-                  }}
-                  className="perspective-1000"
+                />
+
+                <motion.button
+                  onClick={() => setIsLogin(true)}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all duration-200 relative z-10 ${
+                    isLogin
+                      ? "text-white"
+                      : `${currentTheme.text} hover:${currentTheme.hover}`
+                  }`}
                 >
-                  <h2
-                    className={`text-2xl font-bold ${currentTheme.text} mb-2`}
+                  <motion.span
+                    animate={{
+                      scale: isLogin ? 1.05 : 1,
+                      transition: { duration: 0.2 },
+                    }}
                   >
-                    {isLogin ? "Welcome Back!" : "Join Chasmos"}
-                  </h2>
-                  <motion.p
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.2, duration: 0.3 }}
-                    className={`${currentTheme.textSecondary}`}
+                    Sign In
+                  </motion.span>
+                </motion.button>
+
+                <motion.button
+                  onClick={() => setIsLogin(false)}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all duration-200 relative z-10 ${
+                    !isLogin
+                      ? "text-white"
+                      : `${currentTheme.text} hover:${currentTheme.hover}`
+                  }`}
+                >
+                  <motion.span
+                    animate={{
+                      scale: !isLogin ? 1.05 : 1,
+                      transition: { duration: 0.2 },
+                    }}
                   >
-                    {isLogin
-                      ? "Sign in to your account to continue chatting"
-                      : "Create your account and start connecting with friends"}
-                  </motion.p>
-                </motion.div>
+                    Sign Up
+                  </motion.span>
+                </motion.button>
               </div>
+            </div>
 
-              <AnimatePresence mode="wait">
-                {isLogin ? (
+            <div className="flex-1 flex items-center justify-center p-6 overflow-y-auto">
+              <div className="w-full max-w-md">
+                <div className="text-center mb-8 overflow-hidden">
                   <motion.div
-                    key="login"
+                    key={isLogin ? "login-header" : "signup-header"}
                     initial={{
                       opacity: 0,
-                      x: -50,
-                      scale: 0.95,
-                      rotateY: -10,
+                      y: 30,
+                      rotateX: -15,
+                      scale: 0.9,
                     }}
                     animate={{
                       opacity: 1,
-                      x: 0,
+                      y: 0,
+                      rotateX: 0,
                       scale: 1,
-                      rotateY: 0,
                     }}
                     exit={{
                       opacity: 0,
-                      x: 50,
-                      scale: 0.95,
-                      rotateY: 10,
+                      y: -30,
+                      rotateX: 15,
+                      scale: 0.9,
                     }}
                     transition={{
                       duration: 0.5,
                       type: "spring",
                       stiffness: 200,
-                      damping: 25,
+                      damping: 20,
                     }}
                     className="perspective-1000"
                   >
-                    <motion.div
-                      initial={{ y: 20 }}
-                      animate={{ y: 0 }}
-                      transition={{ delay: 0.1, duration: 0.4 }}
+                    <h2 className={`text-2xl font-bold ${currentTheme.text} mb-2`}>
+                      {isLogin ? "Welcome Back!" : "Join Chasmos"}
+                    </h2>
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.2, duration: 0.3 }}
+                      className={currentTheme.textSecondary}
                     >
-                      <LoginForm
-                        currentTheme={currentTheme}
-                        onLogin={handleLogin}
-                      />
-                    </motion.div>
+                      {isLogin
+                        ? "Sign in to your account to continue chatting"
+                        : "Create your account and start connecting with friends"}
+                    </motion.p>
                   </motion.div>
-                ) : (
-                  <motion.div
-                    key="signup"
-                    initial={{
-                      opacity: 0,
-                      x: 50,
-                      scale: 0.95,
-                      rotateY: 10,
-                    }}
-                    animate={{
-                      opacity: 1,
-                      x: 0,
-                      scale: 1,
-                      rotateY: 0,
-                    }}
-                    exit={{
-                      opacity: 0,
-                      x: -50,
-                      scale: 0.95,
-                      rotateY: -10,
-                    }}
-                    transition={{
-                      duration: 0.5,
-                      type: "spring",
-                      stiffness: 200,
-                      damping: 25,
-                    }}
-                    className="perspective-1000"
-                  >
-                    <motion.div
-                      initial={{ y: 20 }}
-                      animate={{ y: 0 }}
-                      transition={{ delay: 0.1, duration: 0.4 }}
-                    >
-                      <SignupForm
-                        currentTheme={currentTheme}
-                        onSignup={handleSignup}
-                      />
-                    </motion.div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                </div>
 
-              {/* Additional Info */}
-              <div className="mt-8 text-center">
-                <p className={`text-xs ${currentTheme.textSecondary}`}>
-                  By continuing, you agree to our{" "}
-                  <button className="text-blue-600 hover:text-blue-500 font-medium">
-                    Terms of Service
-                  </button>{" "}
-                  and{" "}
-                  <button className="text-blue-600 hover:text-blue-500 font-medium">
-                    Privacy Policy
-                  </button>
-                </p>
+                <AnimatePresence mode="wait">
+                  {isLogin ? (
+                    <motion.div
+                      key="login"
+                      initial={{
+                        opacity: 0,
+                        x: -50,
+                        scale: 0.95,
+                        rotateY: -10,
+                      }}
+                      animate={{
+                        opacity: 1,
+                        x: 0,
+                        scale: 1,
+                        rotateY: 0,
+                      }}
+                      exit={{
+                        opacity: 0,
+                        x: 50,
+                        scale: 0.95,
+                        rotateY: 10,
+                      }}
+                      transition={{
+                        duration: 0.5,
+                        type: "spring",
+                        stiffness: 200,
+                        damping: 25,
+                      }}
+                      className="perspective-1000"
+                    >
+                      <motion.div
+                        initial={{ y: 20 }}
+                        animate={{ y: 0 }}
+                        transition={{ delay: 0.1, duration: 0.4 }}
+                      >
+                        <LoginForm
+                          currentTheme={currentTheme}
+                          onLogin={handleLogin}
+                          onGoogleNewUser={(data) => {
+                            setGoogleData({
+                              email: data.email,
+                              name: data.name,
+                              avatar: data.avatar
+                            });
+                          }}
+                        />
+                      </motion.div>
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="signup"
+                      initial={{
+                        opacity: 0,
+                        x: 50,
+                        scale: 0.95,
+                        rotateY: 10,
+                      }}
+                      animate={{
+                        opacity: 1,
+                        x: 0,
+                        scale: 1,
+                        rotateY: 0,
+                      }}
+                      exit={{
+                        opacity: 0,
+                        x: -50,
+                        scale: 0.95,
+                        rotateY: -10,
+                      }}
+                      transition={{
+                        duration: 0.5,
+                        type: "spring",
+                        stiffness: 200,
+                        damping: 25,
+                      }}
+                      className="perspective-1000"
+                    >
+                      <motion.div
+                        initial={{ y: 20 }}
+                        animate={{ y: 0 }}
+                        transition={{ delay: 0.1, duration: 0.4 }}
+                      >
+                        <SignupForm
+                          currentTheme={currentTheme}
+                          onSignup={handleSignup}
+                        />
+                      </motion.div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <div className="mt-8 text-center">
+                  <p className={`text-xs ${currentTheme.textSecondary}`}>
+                    By continuing, you agree to our{" "}
+                    <button className="text-blue-600 hover:text-blue-500 font-medium">
+                      Terms of Service
+                    </button>{" "}
+                    and{" "}
+                    <button className="text-blue-600 hover:text-blue-500 font-medium">
+                      Privacy Policy
+                    </button>
+                  </p>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </>
   );
 };

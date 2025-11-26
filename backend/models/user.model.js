@@ -1,11 +1,11 @@
-import mongoose from "mongoose";
+import mongoose, { Schema } from "mongoose";
 import bcrypt from "bcryptjs";
-
 
 const userSchema = new mongoose.Schema(
   {
-    username: {
+    name: {
       type: String,
+      required: true,
       trim: true,
     },
     email: {
@@ -14,23 +14,95 @@ const userSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
     },
-    phoneNumber: { type: String, required: true, unique: true },
-    avatar: { type: String },
+    phoneNumber: { 
+      type: String, 
+      required: false, 
+      unique: true,
+      sparse: true // allow multiple documents without phoneNumber
+    },
+    avatar: { 
+      type: String,
+      default: "https://icon-library.com/images/anonymous-avatar-icon/anonymous-avatar-icon-25.jpg"
+    },
+    
+    // Chat request fields
+    receivedChatRequests: [
+      {
+        email: { type: String },
+        message: { type: String, default: "" },
+        date: { type: Date, default: Date.now },
+      },
+    ],
+
+    sentChatRequests: [
+      {
+        email: { type: String },
+        message: { type: String, default: "" },
+        date: { type: Date, default: Date.now },
+      },
+    ],
+
+    // Stores emails of users who accepted this user's chat requests
+    acceptedChatRequests: [{
+      type: String
+    }],
+    
     password: {
       type: String,
       required: true,
       minlength: 6,
     },
+    isAdmin: {
+      type: Boolean,
+      default: false,
+    },
+    
+    // Fields for Google Contacts Integration
+    googleId: { 
+      type: String, 
+      unique: true, 
+      sparse: true // Allows multiple null values
+    },
+    googleAccessToken: { 
+      type: String 
+    },
+    googleRefreshToken: { 
+      type: String 
+    },
+    lastContactsSync: { 
+      type: Date 
+    },
+    googleContactsSyncEnabled: {
+      type: Boolean,
+      default: false
+    },
+
+    // Block functionality
+    blockedUsers: [{
+      type: Schema.Types.ObjectId,
+      ref: "User"
+    }],
+    
+    //Archive functionality for chats
+    archivedChats: [{
+      chat: {
+        type: Schema.Types.ObjectId,
+        ref: "Chat"
+      },
+      archivedAt: {
+        type: Date,
+        default: Date.now
+      }
+    }]
+
   },
   { timestamps: true }
 );
 
-// Password match method
 userSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
 
-// Hash password before saving
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) {
     return next();

@@ -4,7 +4,11 @@ import LoadingBar from "./components/loadingbar.jsx";
 import "./App.css";
 import { ThemeProvider } from "./context/ThemeContext.jsx";
 import ChattingPage from "./components/ChattingPage.jsx";
+import NewChat from "./components/NewChat.jsx";
 import AuthPage from "./components/AuthPage.jsx";
+import Profile from "./components/Profile.jsx";
+import Settings from "./components/Settings.jsx";
+import Community from "./components/Community.jsx";
 
 // Protected Route Component
 const ProtectedRoute = ({ children, isAuthenticated }) => {
@@ -18,17 +22,24 @@ const AuthRoute = ({ children, isAuthenticated }) => {
 
 // Main App Content Component
 const AppContent = () => {
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => {
+    // Check if app has been loaded before
+    const hasLoaded = sessionStorage.getItem('app_has_loaded');
+    return !hasLoaded;
+  });
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 1700);
-    return () => clearTimeout(timer);
-  }, []);
+    if (isLoading) {
+      const timer = setTimeout(() => {
+        setIsLoading(false);
+        sessionStorage.setItem('app_has_loaded', 'true');
+      }, 1700);
+      return () => clearTimeout(timer);
+    }
+  }, [isLoading]);
 
   // Check for existing authentication on app start
   useEffect(() => {
@@ -79,57 +90,106 @@ const AppContent = () => {
   }
 
   return (
-    <ThemeProvider>
-      <Routes>
-        {/* Auth Route */}
-        <Route 
-          path="/auth" 
-          element={<AuthPage onAuthenticated={handleAuthentication} />} 
-        />
-        
-        {/* Home Route */}
-        <Route 
-          path="/home" 
-          element={
-            isAuthenticated ? (
-                <ChattingPage onLogout={handleLogout} />
-              ) : (
-                <div className="min-h-screen flex items-center justify-center bg-cosmic-dark text-white">
-                  <div className="text-center">
-                    <h1 className="text-2xl mb-4">Access Denied</h1>
-                    <p className="mb-4">You need to be authenticated to access this page.</p>
-                    <p className="mb-4 text-sm text-gray-400">Current auth state: {String(isAuthenticated)}</p>
-                    <button 
-                      onClick={() => handleAuthentication(true, { name: 'Test User' })}
-                      className="bg-cosmic-blue px-4 py-2 rounded mr-4"
-                    >
-                      Test Login
-                    </button>
-                    <button 
-                      onClick={() => navigate('/auth')}
-                      className="bg-cosmic-purple px-4 py-2 rounded"
-                    >
-                      Go to Login
-                    </button>
-                  </div>
-                </div>
-              )
-          } 
-        />
-        
-        {/* Default route */}
-        <Route 
-          path="/" 
-          element={<Navigate to="/auth" replace />} 
-        />
-        
-        {/* Catch all route */}
-        <Route 
-          path="*" 
-          element={<Navigate to="/auth" replace />} 
-        />
-      </Routes>
-    </ThemeProvider>
+    <Routes>
+      {/* Auth Route */}
+      <Route 
+        path="/auth" 
+        element={<AuthPage onAuthenticated={handleAuthentication} />} 
+      />
+      
+      {/* Home/Chats Route */}
+      <Route 
+        path="/chats" 
+        element={
+          isAuthenticated ? (
+              <ChattingPage onLogout={handleLogout} activeSection="chats" />
+            ) : (
+              <Navigate to="/auth" replace />
+            )
+        } 
+      />
+
+      {/* Groups Route */}
+      <Route 
+        path="/groups" 
+        element={
+          isAuthenticated ? (
+              <ChattingPage onLogout={handleLogout} activeSection="groups" />
+            ) : (
+              <Navigate to="/auth" replace />
+            )
+        } 
+      />
+
+      {/* Documents Route */}
+      <Route 
+        path="/documents" 
+        element={
+          isAuthenticated ? (
+              <ChattingPage onLogout={handleLogout} activeSection="documents" />
+            ) : (
+              <Navigate to="/auth" replace />
+            )
+        } 
+      />
+
+      {/* Community Route */}
+      <Route 
+        path="/community" 
+        element={
+          isAuthenticated ? (
+              <ChattingPage onLogout={handleLogout} activeSection="community" />
+            ) : (
+              <Navigate to="/auth" replace />
+            )
+        } 
+      />
+
+      {/* Profile Route */}
+      <Route 
+        path="/profile" 
+        element={
+          isAuthenticated ? (
+              <ChattingPage onLogout={handleLogout} activeSection="profile" />
+            ) : (
+              <Navigate to="/auth" replace />
+            )
+        } 
+      />
+
+      {/* Settings Route */}
+      <Route 
+        path="/settings" 
+        element={
+          isAuthenticated ? (
+              <ChattingPage onLogout={handleLogout} activeSection="settings" />
+            ) : (
+              <Navigate to="/auth" replace />
+            )
+        } 
+      />
+      
+      {/* Home Route - redirect to chats */}
+      <Route 
+        path="/home" 
+        element={<Navigate to="/chats" replace />} 
+      />
+      
+      {/* Default route */}
+      <Route 
+        path="/" 
+        element={<Navigate to="/auth" replace />} 
+      />
+
+      {/* New Chat Route */}
+      <Route path="/new-chat" element={<NewChat />} />
+
+      {/* Catch all route */}
+      <Route 
+        path="*" 
+        element={<Navigate to="/auth" replace />} 
+      />
+    </Routes>
   );
 };
 
@@ -137,7 +197,9 @@ function App() {
   return (
     <div className="App">
       <Router>
-        <AppContent />
+        <ThemeProvider>
+          <AppContent />
+        </ThemeProvider>
       </Router>
     </div>
   );
