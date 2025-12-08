@@ -13,6 +13,7 @@ import uploadRoutes from "./routes/upload.routes.js";
 import taskRoutes from "./routes/task.routes.js";
 import sprintRoutes from "./routes/sprint.routes.js";
 import contactRoutes from "./routes/contact.routes.js";
+import syncRoutes from "./routes/sync.routes.js";
 import documentRoutes from "./routes/document.route.js";
 import archiveRoutes from "./routes/archive.routes.js"; 
 import blockRoutes from "./routes/block.routes.js"; 
@@ -47,6 +48,7 @@ app.use("/api/message", messageRoutes);
 app.use("/api/tasks", taskRoutes);
 app.use("/api/sprints", sprintRoutes); 
 app.use("/api/contacts", contactRoutes);
+app.use("/api/sync", syncRoutes);
 app.use("/api/document", documentRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/archive", archiveRoutes); 
@@ -319,25 +321,6 @@ io.on("connection", (socket) => {
       await User.findByIdAndUpdate(currentUserId, {
         $addToSet: { blockedUsers: userId }
       });
-      
-      const existingChat = await Chat.findOne({
-        isGroupChat: false,
-        $and: [
-          { users: { $elemMatch: { $eq: currentUserId } } },
-          { users: { $elemMatch: { $eq: userId } } }
-        ]
-      });
-
-      if (existingChat) {
-        await User.findByIdAndUpdate(currentUserId, {
-          $addToSet: {
-            archivedChats: {
-              chat: existingChat._id,
-              archivedAt: new Date()
-            }
-          }
-        });
-      }
       
       socket.to(userId).emit("user blocked you", { blockedBy: currentUserId });
       socket.emit("user blocked", { blockedUserId: userId });

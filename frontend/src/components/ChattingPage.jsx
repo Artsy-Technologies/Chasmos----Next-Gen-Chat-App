@@ -8,13 +8,15 @@ import React, {
   useCallback,
   useRef,
 } from "react";
+import { toast } from "react-hot-toast";
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { io } from "socket.io-client";
-
+import Swal from "sweetalert2";
 import { motion, AnimatePresence } from "framer-motion";
 import chatReqIcon from "../assets/Chat-reuest.png";
 import chatAcceptIcon from "../assets/chat-accepted.png";
+import doubleCheckIcon from "../assets/double-check.svg";
 import {
   Search,
   MoreVertical,
@@ -44,11 +46,14 @@ import {
   Folder,
   UserMinus,
   Copy,
+  PinOff,
+  Edit
 } from "lucide-react";
 import blockService from "../utils/blockService";
 import archiveService from "../utils/archiveService";
 import BlockedUsers from "./BlockedUsers";
 import ArchiveManager from "./ArchiveManager";
+import MediaLinksDocsViewer from "./MediaLinksDocsViewer";
 import { useTheme } from "../context/ThemeContext";
 import MessageInput from "./MessageInput";
 import ContactItem from "./ContactItem";
@@ -68,10 +73,11 @@ import {
 import DocumentChat from "./DocumentChat";
 import NewDocumentUploader from "./NewDocumentUploader";
 import DocumentChatWrapper from "./DocumentChat";
-import Community from "./Community";
 import GroupCreation from "./GroupCreation";
 import DateTag from "./DateTag";
-
+import ForwardMessageModal from "./ForwardMessageModal";
+import PinnedMessagesBar from "./PinnedMessagesBar";
+import DeleteMessageModal from "./DeleteMessageModal";
 
 // Memoized Chat Header Component
 const ChatHeader = React.memo(
@@ -210,38 +216,98 @@ const ChatHeader = React.memo(
                   <ul className="divide-y">
                     <li>
                       {!isBlocked ? (
-                        <button className={`w-full text-left px-4 py-3 flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-800 ${effectiveTheme.text}`} onClick={()=>{ onBlockUser && onBlockUser(selectedContact); setMenuOpen(false); }}>
-                          <UserMinus className="w-4 h-4 opacity-80" />
+                        <button 
+                          className={`w-full text-left px-4 py-3 flex items-center gap-2 transition-all duration-200`}
+                          style={{ 
+                            color: effectiveTheme.mode === 'dark' ? '#e5e7eb' : '#000000',
+                            backgroundColor: 'transparent'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = effectiveTheme.mode === 'dark' ? '#374151' : '#e5e7eb';
+                            e.currentTarget.style.color = effectiveTheme.mode === 'dark' ? '#e5e7eb' : '#6b7280';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                            e.currentTarget.style.color = effectiveTheme.mode === 'dark' ? '#e5e7eb' : '#000000';
+                          }}
+                          onClick={()=>{ onBlockUser && onBlockUser(selectedContact); setMenuOpen(false); }}
+                        >
+                          <UserMinus className="w-4 h-4" />
                           <span>Block User</span>
                         </button>
                       ) : (
-                        <button className={`w-full text-left px-4 py-3 flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-800 ${effectiveTheme.text}`} onClick={()=>{ onUnblockUser && onUnblockUser(selectedContact); setMenuOpen(false); }}>
-                          <UserPlus className="w-4 h-4 opacity-80" />
+                        <button 
+                          className={`w-full text-left px-4 py-3 flex items-center gap-2 transition-all duration-200`}
+                          style={{ 
+                            color: effectiveTheme.mode === 'dark' ? '#e5e7eb' : '#000000',
+                            backgroundColor: 'transparent'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = effectiveTheme.mode === 'dark' ? '#374151' : '#e5e7eb';
+                            e.currentTarget.style.color = effectiveTheme.mode === 'dark' ? '#e5e7eb' : '#6b7280';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                            e.currentTarget.style.color = effectiveTheme.mode === 'dark' ? '#e5e7eb' : '#000000';
+                          }}
+                          onClick={()=>{ onUnblockUser && onUnblockUser(selectedContact); setMenuOpen(false); }}
+                        >
+                          <UserPlus className="w-4 h-4" />
                           <span>Unblock User</span>
                         </button>
                       )}
                     </li>
                     <li>
                       {!isArchived ? (
-                        <button className={`w-full text-left px-4 py-3 flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-800 ${effectiveTheme.text}`} onClick={()=>{ onArchiveChat && onArchiveChat(selectedContact); setMenuOpen(false); }}>
-                          <Archive className="w-4 h-4 opacity-80" />
+                        <button 
+                          className={`w-full text-left px-4 py-3 flex items-center gap-2 transition-all duration-200`}
+                          style={{ 
+                            color: effectiveTheme.mode === 'dark' ? '#e5e7eb' : '#000000',
+                            backgroundColor: 'transparent'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = effectiveTheme.mode === 'dark' ? '#374151' : '#e5e7eb';
+                            e.currentTarget.style.color = effectiveTheme.mode === 'dark' ? '#e5e7eb' : '#6b7280';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                            e.currentTarget.style.color = effectiveTheme.mode === 'dark' ? '#e5e7eb' : '#000000';
+                          }}
+                          onClick={()=>{ onArchiveChat && onArchiveChat(selectedContact); setMenuOpen(false); }}
+                        >
+                          <Archive className="w-4 h-4" />
                           <span>Archive Chat</span>
                         </button>
                       ) : (
-                        <button className={`w-full text-left px-4 py-3 flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-800 ${effectiveTheme.text}`} onClick={()=>{ onUnarchiveChat && onUnarchiveChat(selectedContact); setMenuOpen(false); }}>
-                          <Archive className="w-4 h-4 opacity-80" />
+                        <button 
+                          className={`w-full text-left px-4 py-3 flex items-center gap-2 transition-all duration-200`}
+                          style={{ 
+                            color: effectiveTheme.mode === 'dark' ? '#e5e7eb' : '#000000',
+                            backgroundColor: 'transparent'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = effectiveTheme.mode === 'dark' ? '#374151' : '#e5e7eb';
+                            e.currentTarget.style.color = effectiveTheme.mode === 'dark' ? '#e5e7eb' : '#6b7280';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                            e.currentTarget.style.color = effectiveTheme.mode === 'dark' ? '#e5e7eb' : '#000000';
+                          }}
+                          onClick={()=>{ onUnarchiveChat && onUnarchiveChat(selectedContact); setMenuOpen(false); }}
+                        >
+                          <Archive className="w-4 h-4" />
                           <span>Unarchive Chat</span>
                         </button>
                       )}
                     </li>
                     {/* <li>
-                          <button className={`w-full text-left px-4 py-3 flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-800 ${effectiveTheme.text}`} onClick={()=>{ navigator.clipboard?.writeText(selectedContact?.id || ''); setMenuOpen(false); }}>
+                          <button className={`w-full text-left px-4 py-3 flex items-center gap-2 hover:bg-gray-200 dark:hover:bg-gray-800 ${effectiveTheme.text}`} onClick={()=>{ navigator.clipboard?.writeText(selectedContact?.id || ''); setMenuOpen(false); }}>
                             <Copy className="w-4 h-4 opacity-80" />
                             <span>Copy Chat ID</span>
                           </button>
                     </li> */}
                         <li>
-                          <button className={`w-full text-left px-4 py-3 flex items-center gap-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900 ${effectiveTheme.text}`} onClick={()=>{ if(window.confirm('Delete this chat? This will remove the chat for everyone if you are allowed. Continue?')){ onDeleteChat && onDeleteChat(selectedContact); } setMenuOpen(false); }}>
+                          <button className={`w-full text-left px-4 py-3 flex items-center gap-2 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900`} onClick={()=>{ if(window.confirm('Delete this chat? This will remove the chat for everyone if you are allowed. Continue?')){ onDeleteChat && onDeleteChat(selectedContact); } setMenuOpen(false); }}>
                             <Trash2 className="w-4 h-4 opacity-90" />
                             <span>Delete Chat</span>
                           </button>
@@ -272,7 +338,7 @@ const ChatHeader = React.memo(
 
 // MessageBubble component definition
 const MessageBubble = React.memo(
-  ({ message, isPinned, onPinToggle, onDeleteMessage, effectiveTheme, currentUserId, onHoverDateChange }) => {
+  ({ message, isPinned, onPinToggle, onDeleteMessage, onForwardMessage, onEditMessage, effectiveTheme, currentUserId, onHoverDateChange }) => {
     const sender = message.sender;
     const isOwnMessage = (() => {
       if (!sender) return false;
@@ -282,9 +348,41 @@ const MessageBubble = React.memo(
       return false;
     })();
 
+    const [isEditing, setIsEditing] = useState(false);
+    const [editedText, setEditedText] = useState(message.content || '');
+    const editInputRef = useRef(null);
+
     const handlePinClick = useCallback(() => {
       onPinToggle(message.id);
     }, [message.id, onPinToggle]);
+
+    const handleForwardClick = useCallback(() => {
+      onForwardMessage(message);
+    }, [message, onForwardMessage]);
+
+    const handleEditClick = useCallback(() => {
+      setIsEditing(true);
+      setEditedText(message.content || '');
+    }, [message.content]);
+
+    const handleSaveEdit = useCallback(async () => {
+      if (editedText.trim() && editedText !== message.content) {
+        await onEditMessage(message, editedText.trim());
+      }
+      setIsEditing(false);
+    }, [editedText, message, onEditMessage]);
+
+    const handleCancelEdit = useCallback(() => {
+      setIsEditing(false);
+      setEditedText(message.content || '');
+    }, [message.content]);
+
+    useEffect(() => {
+      if (isEditing && editInputRef.current) {
+        editInputRef.current.focus();
+        editInputRef.current.select();
+      }
+    }, [isEditing]);
 
     const messageText = message.content || '';
     const hasAttachments = message.attachments && message.attachments.length > 0;
@@ -292,6 +390,7 @@ const MessageBubble = React.memo(
 
     return (
       <motion.div
+        id={`message-${message._id || message.id}`}
         initial={{ opacity: 0, y: 20, scale: 0.8 }}
         animate={{
           opacity: 1,
@@ -316,7 +415,8 @@ const MessageBubble = React.memo(
           isOwnMessage ? "justify-end" : "justify-start"
         } group relative`}
       >
-        <motion.div
+        <div className={`flex items-center gap-2 ${isOwnMessage ? "flex-row-reverse" : ""}`}>
+          <motion.div
           className={`${
             isShortMessage ? 'inline-flex flex-col' : 'max-w-xs lg:max-w-md'
           } px-4 ${
@@ -324,7 +424,7 @@ const MessageBubble = React.memo(
             isShortMessage 
               ? 'py-2' 
               : isOwnMessage 
-                ? 'pt-2 pb-8 pr-4' 
+                ? 'pt-2 pb-10 pr-6' 
                 : 'py-2'
           } rounded-lg relative ${
           isOwnMessage
@@ -362,36 +462,12 @@ const MessageBubble = React.memo(
             )}
           </AnimatePresence>
 
-          <motion.button
-            initial={{ opacity: 0, scale: 0.8 }}
-            whileHover={{
-              opacity: 1,
-              scale: 1.1,
-              rotate: [0, -10, 10, 0],
-              transition: { duration: 0.4 },
-            }}
-            className={`absolute -top-2 ${
-              isOwnMessage ? "-left-12" : "-right-12"
-            } opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 rounded-full bg-white shadow-lg`}
-            onClick={handlePinClick}
-          >
-            <Pin
-              className={`w-3 h-3 ${
-                isPinned ? "text-yellow-400 fill-current" : "text-gray-500"
-              } hover:text-yellow-400 transition-colors`}
-            />
-          </motion.button>
-
-          {isOwnMessage && (
-            <motion.button
-              initial={{ opacity: 0, scale: 0.8 }}
-              whileHover={{ opacity: 1, scale: 1.05 }}
-              className={`absolute -top-2 ${isOwnMessage ? "-left-8" : "-right-8"} opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 rounded-full bg-white shadow-lg text-red-600`}
-              onClick={() => onDeleteMessage && onDeleteMessage(message)}
-              title="Delete message"
-            >
-              <Trash2 className="w-3 h-3" />
-            </motion.button>
+          {/* Forwarded indicator */}
+          {message.isForwarded && (
+            <div className={`flex items-center space-x-1 mb-2 text-xs ${effectiveTheme.textSecondary} italic`}>
+              <Share2 className="w-3 h-3" />
+              <span>Forwarded</span>
+            </div>
           )}
 
           {hasAttachments ? (
@@ -407,9 +483,63 @@ const MessageBubble = React.memo(
   transition={{ delay: 0.1 }}
   className={isShortMessage ? 'flex items-end gap-2' : ''}
 >
-  <span className={effectiveTheme.mode === 'dark' ? 'text-white' : 'text-gray-900'}>
-    {message.content}
-  </span>
+  {isEditing ? (
+    <div className="w-full">
+      <textarea
+        ref={editInputRef}
+        value={editedText}
+        onChange={(e) => setEditedText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSaveEdit();
+          } else if (e.key === 'Escape') {
+            handleCancelEdit();
+          }
+        }}
+        className={`w-full px-2 py-1 rounded border-2 ${
+          effectiveTheme.mode === 'dark' 
+            ? 'bg-gray-800 border-blue-400 text-white' 
+            : 'bg-white border-blue-500 text-gray-900'
+        } focus:outline-none resize-none`}
+        rows={Math.min(Math.ceil(editedText.length / 40), 5)}
+      />
+      <div className="flex gap-2 mt-2">
+        <button
+          onClick={handleSaveEdit}
+          className="px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600 transition-colors"
+        >
+          Save
+        </button>
+        <button
+          onClick={handleCancelEdit}
+          className="px-3 py-1 bg-gray-500 text-white rounded text-sm hover:bg-gray-600 transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  ) : (
+    <span className={effectiveTheme.mode === 'dark' ? 'text-white' : 'text-gray-900'}>
+      {message.content.split(/(https?:\/\/[^\s]+)/g).map((part, index) => {
+        if (part.match(/^https?:\/\//)) {
+          return (
+            <a
+              key={index}
+              href={part}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`underline ${effectiveTheme.mode === 'dark' ? 'text-blue-300 hover:text-blue-200' : 'text-blue-600 hover:text-blue-800'}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {part}
+            </a>
+          );
+        }
+        return part;
+      })}
+    </span>
+  )}
               
               {/* For short messages, show timestamp inline */}
               {isShortMessage && isOwnMessage && (
@@ -417,18 +547,20 @@ const MessageBubble = React.memo(
     effectiveTheme.mode === 'dark' ? 'text-white' : 'text-gray-900'
   }`}>
                   {formatMessageTime(message.timestamp)}
+                  {message.isEdited && <span className="text-[10px] italic opacity-60">edited</span>}
                   {message.isRead ? (
-                    <CheckCheck className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                    <img src={doubleCheckIcon} alt="read" className="w-4 h-4 flex-shrink-0" style={{ filter: 'invert(64%) sepia(91%) saturate(473%) hue-rotate(182deg) brightness(101%) contrast(96%)', marginBottom: '1px' }} />
                   ) : (
                     <Check className="w-4 h-4 opacity-75 flex-shrink-0" />
                   )}
                 </span>
               )}
               {isShortMessage && !isOwnMessage && (
-  <span className={`text-xs opacity-75 whitespace-nowrap ml-2 flex-shrink-0 ${
+  <span className={`text-xs opacity-75 whitespace-nowrap ml-2 flex items-center gap-1 flex-shrink-0 ${
     effectiveTheme.mode === 'dark' ? 'text-white' : 'text-gray-900'
   }`}>
     {formatMessageTime(message.timestamp)}
+    {message.isEdited && <span className="text-[10px] italic opacity-60">edited</span>}
   </span>
 )}
             </motion.div>
@@ -438,28 +570,29 @@ const MessageBubble = React.memo(
           {!isShortMessage && (
             <motion.div
               className={`flex items-center justify-end space-x-1 mt-1 ${
-                isOwnMessage ? 'absolute bottom-2 right-3' : 'mt-2'
+                isOwnMessage ? 'absolute bottom-2 right-2' : 'mt-2'
               }`}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.3 }}
             >
-              <span className={`text-xs opacity-75 ${
+              <span className={`text-xs opacity-75 flex items-center gap-1 ${
   isOwnMessage 
     ? (effectiveTheme.mode === 'dark' ? 'text-white' : 'text-gray-900')
     : (effectiveTheme.mode === 'dark' ? 'text-white' : 'text-gray-900')
 }`}>
   {formatMessageTime(message.timestamp)}
+  {message.isEdited && <span className="text-[10px] italic opacity-60">edited</span>}
 </span>
               {isOwnMessage && (
                 <motion.div
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
                   transition={{ delay: 0.4, type: "spring", stiffness: 400 }}
-                  className="flex-shrink-0"
+                  className="flex-shrink-0 ml-1"
                 >
                   {message.isRead ? (
-                    <CheckCheck className="w-4 h-4 text-blue-400" />
+                    <img src={doubleCheckIcon} alt="read" className="w-4 h-4" style={{ filter: 'invert(64%) sepia(91%) saturate(473%) hue-rotate(182deg) brightness(101%) contrast(96%)', marginBottom: '1px' }} />
                   ) : (
                     <Check className="w-4 h-4 opacity-75 text-white" />
                   )}
@@ -468,6 +601,64 @@ const MessageBubble = React.memo(
             </motion.div>
           )}
         </motion.div>
+
+        {/* Action buttons - show after message bubble */}
+        {!isEditing && (
+          <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+            {/* Forward button */}
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              className="p-1 rounded-full bg-white shadow-lg text-blue-600"
+              onClick={handleForwardClick}
+              title="Forward message"
+            >
+              <Share2 className="w-3 h-3" />
+            </motion.button>
+
+            {/* Pin button */}
+            <motion.button
+              whileHover={{
+                scale: 1.1,
+                rotate: [0, -10, 10, 0],
+                transition: { duration: 0.4 },
+              }}
+              className="p-1 rounded-full bg-white shadow-lg"
+              onClick={handlePinClick}
+              title={isPinned ? "Unpin message" : "Pin message"}
+            >
+              <Pin
+                className={`w-3 h-3 ${
+                  isPinned ? "text-yellow-400 fill-current" : "text-gray-500"
+                } hover:text-yellow-400 transition-colors`}
+              />
+            </motion.button>
+
+            {/* Delete button - only for own messages */}
+            {isOwnMessage && (
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                className="p-1 rounded-full bg-white shadow-lg text-red-600"
+                onClick={() => onDeleteMessage && onDeleteMessage(message)}
+                title="Delete message"
+              >
+                <Trash2 className="w-3 h-3" />
+              </motion.button>
+            )}
+
+            {/* Edit button - only for own text messages */}
+            {isOwnMessage && !hasAttachments && message.content && (
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                className="p-1 rounded-full bg-white shadow-lg text-green-600"
+                onClick={handleEditClick}
+                title="Edit message"
+              >
+                <Edit className="w-3 h-3" />
+              </motion.button>
+            )}
+          </div>
+        )}
+        </div>
       </motion.div>
     );
   }
@@ -640,7 +831,23 @@ return (
     <div className={`mt-2 text-sm ${
       effectiveTheme.mode === 'dark' ? 'text-white' : 'text-gray-900'
     }`}>
-      {message.content}
+      {message.content.split(/(https?:\/\/[^\s]+)/g).map((part, index) => {
+        if (part.match(/^https?:\/\//)) {
+          return (
+            <a
+              key={index}
+              href={part}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`underline ${effectiveTheme.mode === 'dark' ? 'text-blue-300 hover:text-blue-200' : 'text-blue-600 hover:text-blue-800'}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {part}
+            </a>
+          );
+        }
+        return part;
+      })}
     </div>
   ) : null
 ) : (
@@ -688,12 +895,15 @@ const MessagesArea = ({
   selectedContactId,
   currentUserId,
   onDeleteMessage,
+  onForwardMessage,
+  onEditMessage,
   onHoverDateChange,
 }) => {
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const shouldAutoScrollRef = useRef(true); // ✅ Track if we should auto-scroll
+  const scrollTimeoutRef = useRef(null); // Debounce scroll button visibility
 
   // Helper: format day label like WhatsApp (Today / Yesterday / date)
   const formatDayLabel = useCallback((ts) => {
@@ -732,15 +942,30 @@ const MessagesArea = ({
       e.stopPropagation();
       e.preventDefault();
     }
+    
+    // Hide the button immediately when clicked
+    setShowScrollButton(false);
+    
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+      // Set auto-scroll flag to true
+      shouldAutoScrollRef.current = true;
     }
   };
 
   const handleScroll = (e) => {
     const element = e.target;
     const isNearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 200;
-    setShowScrollButton(!isNearBottom);
+    
+    // Clear any existing timeout
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+    
+    // Debounce the button visibility update
+    scrollTimeoutRef.current = setTimeout(() => {
+      setShowScrollButton(!isNearBottom);
+    }, 150);
     
     // ✅ Only auto-scroll if user is near bottom
     shouldAutoScrollRef.current = isNearBottom;
@@ -819,24 +1044,51 @@ const MessagesArea = ({
       >
         <div className="relative z-10">
           <AnimatePresence mode="popLayout">
-            {messagesWithDates.map((item) => (
-              item && item._isDate ? (
-                <div key={item.id} className="w-full flex justify-center">
-                  <DateTag label={formatDayLabel(item.timestamp)} />
-                </div>
-              ) : (
-                <MessageBubble
-                  key={item.id}
-                  message={item}
-                  isPinned={pinnedMessages[item.id] || false}
-                  onPinToggle={onPinMessage}
-                  onDeleteMessage={onDeleteMessage}
-                  effectiveTheme={effectiveTheme}
-                  currentUserId={currentUserId}
-                  onHoverDateChange={onHoverDateChange}
-                />
-              )
-            ))}
+            {messagesWithDates.map((item) => {
+              if (item && item._isDate) {
+                return (
+                  <div key={item.id} className="w-full flex justify-center">
+                    <DateTag label={formatDayLabel(item.timestamp)} />
+                  </div>
+                );
+              } else if (item && item.isSystemMessage) {
+                // System notification (block/unblock)
+                return (
+                  <motion.div
+                    key={item.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="w-full flex justify-center my-2"
+                  >
+                    <div
+                      className={`px-4 py-2 rounded-lg text-sm ${
+                        effectiveTheme.mode === 'dark'
+                          ? 'bg-gray-700/50 text-gray-300'
+                          : 'bg-gray-200/70 text-gray-700'
+                      }`}
+                    >
+                      {item.content}
+                    </div>
+                  </motion.div>
+                );
+              } else {
+                return (
+                  <MessageBubble
+                    key={item.id}
+                    message={item}
+                    isPinned={pinnedMessages[item.id] || false}
+                    onPinToggle={onPinMessage}
+                    onDeleteMessage={onDeleteMessage}
+                    onForwardMessage={onForwardMessage}
+                    onEditMessage={onEditMessage}
+                    effectiveTheme={effectiveTheme}
+                    currentUserId={currentUserId}
+                    onHoverDateChange={onHoverDateChange}
+                  />
+                );
+              }
+            })}
           </AnimatePresence>
 
           {isTyping[selectedContactId] && (
@@ -884,7 +1136,7 @@ const MessagesArea = ({
             onClick={scrollToBottom}
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
-            className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-2xl cursor-pointer"
+            className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-50 w-11 h-11 rounded-full flex items-center justify-center shadow-2xl cursor-pointer"
             style={{
               background: effectiveTheme.mode === 'dark'
                 ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
@@ -919,8 +1171,8 @@ const MessagesArea = ({
               }}
             >
               <svg
-                width="28"
-                height="28"
+                width="24"
+                height="24"
                 viewBox="0 0 24 24"
                 fill="none"
                 xmlns="http://www.w3.org/2000/svg"
@@ -951,6 +1203,18 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
   const [searchTerm, setSearchTerm] = useState("");
   const [chatSearchTerm, setChatSearchTerm] = useState("");
   const [contacts, setContacts] = useState([]);
+  const [googleContacts, setGoogleContacts] = useState([]);
+
+  // Clear any stale contacts on mount (helps when user account was deleted and re-created)
+  useEffect(() => {
+    setContacts([]);
+    setGoogleContacts([]);
+    try {
+      localStorage.removeItem('googleContacts');
+    } catch (e) {
+      // ignore
+    }
+  }, []);
   const [messages, setMessages] = useState(mockMessages);
   const [isTyping, setIsTyping] = useState({});
   const [isMobileView, setIsMobileView] = useState(false);
@@ -958,18 +1222,26 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
   const [showChatSearch, setShowChatSearch] = useState(false);
   const [showThreeDotsMenu, setShowThreeDotsMenu] = useState(false);
   const [pinnedMessages, setPinnedMessages] = useState({});
+  const [pinnedMessagesData, setPinnedMessagesData] = useState([]);
 
   const [selectedDocument, setSelectedDocument] = useState(null);
 
   const [isNewDocumentChat, setIsNewDocumentChat] = useState(false);
   const [showFloatingMenu, setShowFloatingMenu] = useState(false);
-  const [lastClickTime, setLastClickTime] = useState(0);
   const [showGroupCreation, setShowGroupCreation] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [activeNavItem, setActiveNavItem] = useState(activeSection); // 'chats', 'groups', 'documents', 'community', 'profile', 'settings'
+
+  // Forward message state
+  const [showForwardModal, setShowForwardModal] = useState(false);
+  const [messageToForward, setMessageToForward] = useState(null);
+
+  // Delete message state
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [messageToDelete, setMessageToDelete] = useState(null);
 
   // Hovered message date label (single place below header)
   const [hoverDateLabel, setHoverDateLabel] = useState("");
@@ -997,11 +1269,172 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
   }, []);
 
   // Block / Archive UI state
+  const [showBlockConfirmModal, setShowBlockConfirmModal] = useState(false);
+  const [userToBlock, setUserToBlock] = useState(null);
   const [showBlockedModal, setShowBlockedModal] = useState(false);
   const [showArchiveModal, setShowArchiveModal] = useState(false);
   const [isBlockedState, setIsBlockedState] = useState(false);
   const [isArchivedState, setIsArchivedState] = useState(false);
   const [archivedChatIds, setArchivedChatIds] = useState(new Set());
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [showMediaViewer, setShowMediaViewer] = useState(false);
+  const moreMenuRef = useRef(null);
+// ------------------------------
+// 🔥 STATES
+// ------------------------------
+const [pinnedDocs, setPinnedDocs] = useState([]);
+
+
+// You already have theme from props
+// const { effectiveTheme } = props;
+const askDelete = async (documentId) => {
+  const { isConfirmed } = await Swal.fire({
+    title: "Delete Document?",
+    text: "This action cannot be undone.",
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonColor: "#d33",
+    cancelButtonColor: "#555",
+    confirmButtonText: "Delete",
+    background: effectiveTheme.secondary,
+    color: effectiveTheme.toastText,
+    width: 350,            // smaller width
+    padding: "1.5rem",     // smaller padding
+    customClass: {
+      popup: "rounded-lg",
+      title: "text-md font-semibold",
+      confirmButton: "px-4 py-1 rounded-md",
+      cancelButton: "px-4 py-1 rounded-md",
+    },
+  });
+
+  if (isConfirmed) deleteDocument(documentId);
+};
+
+
+
+// ------------------------------
+// 🔥 FETCH ALL DOCUMENTS + SET PINNED
+// ------------------------------
+useEffect(() => {
+  const fetchDocuments = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/document`,  {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`, // ✅ IMPORTANT
+        },
+      });
+
+      if (!res.ok) throw new Error("Failed to fetch docs");
+
+      const data = await res.json();
+
+      if (!Array.isArray(data)) {
+        console.error("❌ API returned non-array:", data);
+        return;
+      }
+
+      // frontend expects fileName field
+      setDocumentChats(data.filter(doc => !doc.isPinned));
+      setPinnedDocs(data.filter(doc => doc.isPinned));
+
+    } catch (err) {
+      console.error("Failed to fetch documents:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  fetchDocuments();
+}, []);
+
+const deleteDocument = async (documentId) => {
+  try {
+    const res = await fetch(`/api/document/${documentId}`, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${localStorage.getItem("token")}`,
+      },
+    });
+
+    if (!res.ok) throw new Error("Failed to delete document");
+
+    setDocumentChats((prev) => prev.filter((d) => d._id !== documentId));
+    setPinnedDocs((prev) => prev.filter((d) => d._id !== documentId));
+
+    if (selectedDocument && selectedDocument._id === documentId) {
+      setSelectedDocument(null);
+      setIsNewDocumentChat(true);
+    }
+
+    toast.success("Document deleted", {
+      style: {
+        background: effectiveTheme.toastBg,
+        color: effectiveTheme.toastText,
+        border: effectiveTheme.toastBorder,
+      },
+    });
+  } catch (err) {
+    toast.error("Delete failed", {
+      style: {
+        background: effectiveTheme.toastBg,
+        color: effectiveTheme.toastText,
+        border: effectiveTheme.toastBorder,
+      },
+    });
+  }
+};
+
+
+const togglePin = async (docId, isPinnedNow) => {
+  try {
+    const endpoint = isPinnedNow ? "unpin" : "pin";
+
+    const res = await fetch(
+      `${API_BASE_URL}/api/document/${docId}/${endpoint}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`, // ✅ IMPORTANT
+        },
+      }
+    );
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Failed to toggle");
+
+    // -------- UI UPDATE --------
+    if (isPinnedNow) {
+      // UNPIN
+      const doc = pinnedDocs.find(d => d._id === docId);
+
+      setPinnedDocs(prev => prev.filter(d => d._id !== docId));
+      if (doc) setDocumentChats(prev => [doc, ...prev]);
+    } else {
+      // PIN
+      const doc = documentChats.find(d => d._id === docId);
+
+      if (doc) {
+        setPinnedDocs(prev => [...prev, doc]);
+      }
+
+      setDocumentChats(prev => prev.filter(d => d._id !== docId));
+    }
+
+  } catch (err) {
+    console.error("Pin error:", err);
+  }
+};
+
+  
+  // Pin replace modal state
+  const [showPinReplaceModal, setShowPinReplaceModal] = useState(false);
+  const [pendingPinMessageId, setPendingPinMessageId] = useState(null);
 
   // Keep archivedChatIds in sync (reload when archive modal toggles)
   useEffect(() => {
@@ -1018,6 +1451,20 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
     load();
     return () => { mounted = false; };
   }, [showArchiveModal]);
+
+  // Close more menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target)) {
+        setShowMoreMenu(false);
+      }
+    };
+
+    if (showMoreMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showMoreMenu]);
 
   // Sync activeNavItem with activeSection prop (from URL)
   useEffect(() => {
@@ -1041,10 +1488,42 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
   const chatSearchRef = useRef(null);
   const threeDotsMenuRef = useRef(null);
   const floatingMenuRef = useRef(null);
+  const floatingButtonRef = useRef(null);
   const userMenuRef = useRef(null);
   // API Base URL from environment variable
   const API_BASE_URL =
     import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+
+  // Load synced Google contacts (if any) and merge into contacts list
+  useEffect(() => {
+    let cancelled = false;
+    const loadGoogleContacts = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        const res = await fetch(`${API_BASE_URL}/api/sync/google-contacts`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        const googleContactsResp = Array.isArray(json.data) ? json.data : [];
+        const formatted = googleContactsResp.map((c) => ({
+          id: `google-${(c.email || c.phone || c.name)}`,
+          name: c.name,
+          email: c.email,
+          avatar: c.avatar,
+          isGoogleContact: true,
+        }));
+        if (!cancelled) {
+          setGoogleContacts(formatted);
+        }
+      } catch (e) {
+        // ignore
+      }
+    };
+    loadGoogleContacts();
+    return () => { cancelled = true; };
+  }, []);
 
   // Delete chat handler (lifted here so it has access to state setters)
   const handleDeleteChat = async (contact) => {
@@ -1073,11 +1552,17 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
   };
 
   // Delete message handler (lifted here so it has access to state setters)
-  const handleDeleteMessage = async (message) => {
+  const handleDeleteMessage = (message) => {
+    if (!message) return;
+    setMessageToDelete(message);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDeleteMessage = async (deleteForEveryone) => {
+    const message = messageToDelete;
     if (!message) return;
     const chatId = selectedContact?.id || selectedContact?._id;
     if (!chatId) return;
-    const deleteForEveryone = window.confirm('Delete for everyone? Press OK to delete for everyone, Cancel to delete only for you.');
     try {
       const token = localStorage.getItem('token') || localStorage.getItem('chasmos_auth_token');
       const messageId = message._id || message.id;
@@ -1150,8 +1635,167 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
       }
     } catch (err) {
       console.error('Delete message failed', err);
+    } finally {
+      setShowDeleteModal(false);
+      setMessageToDelete(null);
     }
   };
+
+  // Edit message handler
+  const handleEditMessage = async (message, newContent) => {
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('chasmos_auth_token');
+      if (!token) {
+        console.error('No token found');
+        return;
+      }
+
+      const messageId = message._id || message.id;
+      const res = await fetch(`${API_BASE_URL}/api/message/${messageId}/edit`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ content: newContent }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.message || 'Failed to edit message');
+      }
+
+      const data = await res.json();
+      const updatedMessage = data.updatedMessage;
+
+      // Update the message in local state
+      const chatId = message.chat?._id || message.chat?.id || message.chat || selectedContact?.id;
+      setMessages((prev) => {
+        const existing = prev[chatId] || [];
+        const updated = existing.map((m) => 
+          String(m._id || m.id) === String(messageId) 
+            ? { ...m, content: updatedMessage.content, isEdited: true, editedAt: updatedMessage.editedAt }
+            : m
+        );
+        return { ...prev, [chatId]: updated };
+      });
+
+      // Emit socket event for real-time update
+      if (socketRef.current?.emit) {
+        socketRef.current.emit('edit message', { 
+          messageId, 
+          chatId,
+          content: newContent,
+          isEdited: true,
+          editedAt: updatedMessage.editedAt
+        });
+      }
+    } catch (err) {
+      console.error('Edit message failed', err);
+      alert(err.message || 'Failed to edit message');
+    }
+  };
+
+  // Forward message handlers
+  const handleForwardMessage = useCallback((message) => {
+    setMessageToForward(message);
+    setShowForwardModal(true);
+  }, []);
+
+  const handleForwardToChats = async (selectedChats) => {
+    if (!messageToForward || selectedChats.length === 0) return;
+
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('chasmos_auth_token');
+      if (!token) {
+        console.error('No token found');
+        return;
+      }
+
+      // Forward the message to each selected chat
+      for (const chat of selectedChats) {
+        // Prioritize chatId (the actual MongoDB chat document _id) over id (other user's id)
+        const chatId = chat.chatId || chat._id || chat.id;
+        
+        const forwardData = {
+          chatId: chatId,
+          content: messageToForward.content,
+          attachments: messageToForward.attachments || [],
+          type: messageToForward.type || 'text',
+          isForwarded: true,
+        };
+
+        const res = await fetch(`${API_BASE_URL}/api/message/forward`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(forwardData),
+        });
+
+        if (!res.ok) {
+          console.error(`Failed to forward message to ${chat.name || chat.chatName}`);
+          continue;
+        }
+
+        const forwardedMessage = await res.json();
+
+        // Emit socket event for real-time update
+        if (socketRef.current?.emit) {
+          socketRef.current.emit('new message', forwardedMessage);
+        }
+
+        // Update local messages state if the chat is already loaded
+        setMessages((prev) => {
+          const existing = prev[chatId] || [];
+          return {
+            ...prev,
+            [chatId]: [...existing, forwardedMessage],
+          };
+        });
+
+        // Update recent chats preview
+        setRecentChats((prev) =>
+          prev.map((c) =>
+            (String(c.id) === String(chatId) || String(c.chatId) === String(chatId))
+              ? { ...c, lastMessage: forwardedMessage.content || 'Forwarded message', timestamp: Date.now() }
+              : c
+          )
+        );
+      }
+
+      // Show success notification (you can customize this)
+      console.log(`Message forwarded to ${selectedChats.length} chat(s)`);
+      
+    } catch (err) {
+      console.error('Forward message failed', err);
+    }
+  };
+
+  // Helper function to filter duplicate consecutive system messages
+  const filterDuplicateSystemMessages = useCallback((messages) => {
+    if (!Array.isArray(messages) || messages.length === 0) return messages;
+    
+    const filtered = [];
+    let lastSystemMessage = null;
+    
+    for (const msg of messages) {
+      if (msg.isSystemMessage) {
+        // Check if this system message is the same as the last one
+        if (lastSystemMessage && 
+            lastSystemMessage.content === msg.content && 
+            Math.abs(msg.timestamp - lastSystemMessage.timestamp) < 2000) { // Within 2 seconds
+          // Skip duplicate
+          continue;
+        }
+        lastSystemMessage = msg;
+      }
+      filtered.push(msg);
+    }
+    
+    return filtered;
+  }, []);
 
   // Socket reference
   const socketRef = useRef(null);
@@ -1204,16 +1848,118 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
 
   // Handlers for block / archive actions
   const handleBlockUser = async (contact) => {
-    const userId = contact?.userId || contact?._id || contact?.id;
-    if (!userId) return;
+    // Show confirmation modal instead of blocking immediately
+    setUserToBlock(contact);
+    setShowBlockConfirmModal(true);
+  };
+
+  const confirmBlockUser = async () => {
+    if (!userToBlock) return;
+    
+    console.log('🔍 Full userToBlock object:', JSON.stringify(userToBlock, null, 2));
+    
+    // Get current user ID
+    const currentUser = JSON.parse(localStorage.getItem('chasmos_user_data') || '{}');
+    const currentUserId = currentUser._id || currentUser.id;
+    
+    // Try to get the userId from the contact object
+    let userId = userToBlock?.id;
+    
+    // If id matches chatId or if we have participants array, extract from participants
+    if ((userId === userToBlock?.chatId) || (!userId && userToBlock?.participants)) {
+      // Find the other user from participants array
+      const otherUser = userToBlock.participants?.find(
+        p => String(p._id) !== String(currentUserId)
+      );
+      userId = otherUser?._id;
+      console.log('✅ Extracted userId from participants:', userId);
+    }
+    
+    // Fallback to other fields
+    if (!userId) {
+      userId = userToBlock?.userId || userToBlock?._id;
+    }
+    
+    console.log('🔍 Attempting to block user:', {
+      extractedUserId: userId,
+      contactId: userToBlock?.id,
+      contactChatId: userToBlock?.chatId
+    });
+    
+    // If we still don't have userId and we have a chatId, fetch the chat
+    if (!userId && userToBlock?.chatId) {
+      try {
+        const token = localStorage.getItem('token') || localStorage.getItem('chasmos_auth_token');
+        const res = await fetch(`${API_BASE_URL}/api/chat/${userToBlock.chatId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        
+        if (res.ok) {
+          const chatData = await res.json();
+          const currentUser = JSON.parse(localStorage.getItem('chasmos_user_data') || '{}');
+          const currentUserId = currentUser._id || currentUser.id;
+          
+          // Find the other user in the chat
+          const otherUser = chatData.users?.find(u => String(u._id) !== String(currentUserId));
+          userId = otherUser?._id;
+          console.log('✅ Found userId from chat:', userId);
+        }
+      } catch (chatErr) {
+        console.error('Failed to fetch chat for user ID:', chatErr);
+      }
+    }
+    
+    if (!userId) {
+      console.error('❌ No valid userId found');
+      alert('Unable to identify user to block');
+      setShowBlockConfirmModal(false);
+      setUserToBlock(null);
+      return;
+    }
+    
     try {
       await blockService.blockUser(userId);
       if (socketRef.current?.emit) socketRef.current.emit('block user', { userId });
       setIsBlockedState(true);
       setShowBlockedModal(true);
+      setShowBlockConfirmModal(false);
+      setUserToBlock(null);
+      
+      // Refresh messages to get the system message from backend
+      if (selectedContact && selectedContact.chatId) {
+        const token = localStorage.getItem('token') || localStorage.getItem('chasmos_auth_token');
+        const msgsRes = await fetch(`${API_BASE_URL}/api/message/${selectedContact.chatId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        
+        if (msgsRes.ok) {
+          const msgs = await msgsRes.json();
+          const formatted = msgs.map((m) => ({
+            id: m._id,
+            type: m.type || "text",
+            content: m.content || m.text || "",
+            sender: m.sender?._id || m.sender,
+            timestamp: new Date(m.createdAt || m.timestamp || Date.now()).getTime(),
+            isRead: true,
+            attachments: Array.isArray(m.attachments) ? m.attachments : [],
+            isSystemMessage: m.type === 'system',
+          }));
+          
+          // Filter duplicate consecutive system messages
+          const filteredMessages = filterDuplicateSystemMessages(formatted);
+          
+          setMessages((prev) => ({
+            ...prev,
+            [selectedContact.chatId]: filteredMessages,
+          }));
+        }
+      }
     } catch (err) {
       console.error('Block failed', err);
+      alert(err.message || 'Failed to block user');
       setIsBlockedState(false);
+      setShowBlockConfirmModal(false);
+      setUserToBlock(null);
     }
   };
 
@@ -1224,13 +1970,43 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
       await blockService.unblockUser(userId);
       if (socketRef.current?.emit) socketRef.current.emit('unblock user', { userId });
       setIsBlockedState(false);
+      
+      // Refresh messages to get the system message from backend
+      if (selectedContact && selectedContact.chatId) {
+        const token = localStorage.getItem('token') || localStorage.getItem('chasmos_auth_token');
+        const msgsRes = await fetch(`${API_BASE_URL}/api/message/${selectedContact.chatId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        
+        if (msgsRes.ok) {
+          const msgs = await msgsRes.json();
+          const formatted = msgs.map((m) => ({
+            id: m._id,
+            type: m.type || "text",
+            content: m.content || m.text || "",
+            sender: m.sender?._id || m.sender,
+            timestamp: new Date(m.createdAt || m.timestamp || Date.now()).getTime(),
+            isRead: true,
+            attachments: Array.isArray(m.attachments) ? m.attachments : [],
+            isSystemMessage: m.type === 'system',
+          }));
+          
+          // Filter duplicate consecutive system messages
+          const filteredMessages = filterDuplicateSystemMessages(formatted);
+          
+          setMessages((prev) => ({
+            ...prev,
+            [selectedContact.chatId]: filteredMessages,
+          }));
+        }
+      }
     } catch (err) {
       console.error('Unblock failed', err);
     }
   };
 
   const handleArchiveChat = async (contact) => {
-    const chatId = contact?.id || contact?._id;
+    const chatId = contact?.chatId || contact?._id || contact?.id;
     if (!chatId) return;
     try {
       await archiveService.archiveChat(chatId);
@@ -1241,6 +2017,18 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
         s.add(String(chatId));
         return s;
       });
+      
+      // Remove from recent chats immediately
+      setRecentChats(prev => prev.filter(c => String(c.chatId || c._id) !== String(chatId)));
+      
+      // Clear selection if the archived chat was selected
+      if (selectedContact && (String(selectedContact.chatId) === String(chatId) || String(selectedContact._id) === String(chatId))) {
+        setSelectedContact(null);
+        if (isMobileView) {
+          setShowSidebar(true);
+        }
+      }
+      
       setShowArchiveModal(true);
     } catch (err) {
       console.error('Archive failed', err);
@@ -1248,7 +2036,7 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
   };
 
   const handleUnarchiveChat = async (contact) => {
-    const chatId = contact?.id || contact?._id;
+    const chatId = contact?.chatId || contact?.id || contact?._id;
     if (!chatId) return;
     try {
       await archiveService.unarchiveChat(chatId);
@@ -1259,6 +2047,9 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
         s.delete(String(chatId));
         return s;
       });
+      
+      // Refresh recent chats to show the unarchived chat
+      await refreshRecentChats();
     } catch (err) {
       console.error('Unarchive failed', err);
     }
@@ -1315,9 +2106,11 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
               timestamp: new Date(m.createdAt || m.timestamp || Date.now()).getTime(),
               isRead: true,
               attachments: Array.isArray(m.attachments) ? m.attachments : [],
+              isSystemMessage: m.type === 'system',
             }));
 
-            setMessages((prev) => ({ ...prev, [normalizedChatId]: formatted }));
+            const filteredMessages = filterDuplicateSystemMessages(formatted);
+            setMessages((prev) => ({ ...prev, [normalizedChatId]: filteredMessages }));
             try {
               const last = formatted.length ? formatted[formatted.length - 1] : null;
               if (last) {
@@ -1341,9 +2134,6 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
       }
     })();
   };
-
-  
-  
 
   // Fetch both received and accepted requests
   // useEffect(() => {
@@ -1528,8 +2318,6 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
   };
 }, []);
 
-
-
   //After chatting with accepted chats
   const handleOpenChat = (chat) => {
     // When opening a chat with a contact, ensure a chat exists on backend
@@ -1614,12 +2402,15 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
             timestamp: new Date(m.createdAt || m.createdAt || m.timestamp || Date.now()).getTime(),
             isRead: true,
             attachments: Array.isArray(m.attachments) ? m.attachments : [],
+            isSystemMessage: m.type === 'system',
           }));
 
           console.debug("handleOpenChat: formatted messages", { formattedSample: formatted.slice(0,3) });
 
+          const filteredFormatted = filterDuplicateSystemMessages(formatted);
+
           setMessages((prev) => {
-            const next = { ...prev, [normalizedChatId]: formatted };
+            const next = { ...prev, [normalizedChatId]: filteredFormatted };
             console.debug("handleOpenChat: setMessages updated for chat", { normalizedChatId, newCount: formatted.length });
             try {
               // update recent/contact preview based on last message loaded from DB
@@ -1777,29 +2568,82 @@ useEffect(() => {
     [isMobileView]
   );
 
-  // Fetch recent chats
+  // Fetch pinned messages when chat is selected
   useEffect(() => {
-    const fetchRecentChats = async () => {
+    const fetchPinnedMessages = async () => {
+      if (!selectedContact) {
+        setPinnedMessagesData([]);
+        setPinnedMessages({});
+        return;
+      }
+
+      const chatId = selectedContact.id || selectedContact._id;
+      if (!chatId) return;
+
       try {
-        const token = localStorage.getItem("token");
-        if (!token) throw new Error("No token found.");
+        const token = localStorage.getItem('token') || localStorage.getItem('chasmos_auth_token');
+        if (!token) return;
 
-        // Fetch archived chats to exclude them from the recent list
-              let archived = [];
-              try {
-                archived = await archiveService.getArchivedChats();
-                setArchivedChatIds(new Set((archived || []).map(c => String(c._id || c.id || (c.chat && c.chat._id) || ''))));
-              } catch (e) {
-                archived = [];
-              }
-
-        const res = await fetch(`${API_BASE_URL}/api/chat/recent`, {
+        const res = await fetch(`${API_BASE_URL}/api/message/pinned/${chatId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
 
-        if (!res.ok) throw new Error("Failed to fetch recent chats");
+        if (!res.ok) {
+          console.error('Failed to fetch pinned messages');
+          return;
+        }
 
         const data = await res.json();
+        setPinnedMessagesData(data || []);
+
+        // Update pinnedMessages state for UI
+        const pinnedMap = {};
+        (data || []).forEach(pinned => {
+          if (pinned.message) {
+            const msgId = pinned.message._id || pinned.message.id;
+            pinnedMap[msgId] = true;
+          }
+        });
+        setPinnedMessages(pinnedMap);
+
+      } catch (err) {
+        console.error('Error fetching pinned messages:', err);
+      }
+    };
+
+    fetchPinnedMessages();
+  }, [selectedContact, API_BASE_URL]);
+
+  // Function to refresh recent chats (can be called from anywhere)
+  const refreshRecentChats = useCallback(async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) throw new Error("No token found.");
+
+      // Fetch archived chats to exclude them from the recent list
+      let archived = [];
+      let archivedChatIdsSet = new Set();
+      try {
+        archived = await archiveService.getArchivedChats();
+        // Build set of archived chat IDs for filtering
+        archived.forEach(archivedChat => {
+          const chatId = archivedChat._id || archivedChat.id || (archivedChat.chat && archivedChat.chat._id);
+          if (chatId) {
+            archivedChatIdsSet.add(String(chatId));
+          }
+        });
+        setArchivedChatIds(archivedChatIdsSet);
+      } catch (e) {
+        archived = [];
+      }
+
+      const res = await fetch(`${API_BASE_URL}/api/chat/recent`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) throw new Error("Failed to fetch recent chats");
+
+      const data = await res.json();
 
         const localUser = JSON.parse(
           localStorage.getItem("chasmos_user_data") || "{}"
@@ -1845,19 +2689,21 @@ useEffect(() => {
           };
         });
 
-        // Filter out archived chats
-        const archivedSet = new Set((archived || []).map(c => String(c._id || c.id || (c.chat && c.chat._id) || '')));
-        const filtered = formatted.filter(c => !archivedSet.has(String(c.chatId || c.id || '')));
-        setRecentChats(filtered);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
+      // Filter out archived chats using the chatId
+      const filtered = formatted.filter(c => {
+        const chatIdToCheck = String(c.chatId || c._id || '');
+        return !archivedChatIdsSet.has(chatIdToCheck);
+      });
+      setRecentChats(filtered);
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [API_BASE_URL]);
 
-    fetchRecentChats();
-  }, []);
+  // Fetch recent chats on mount
+  useEffect(() => {
+    refreshRecentChats();
+  }, [refreshRecentChats]);
 
   // Handle responsive design
   useEffect(() => {
@@ -1903,6 +2749,8 @@ useEffect(() => {
       if (
         floatingMenuRef.current &&
         !floatingMenuRef.current.contains(event.target) &&
+        floatingButtonRef.current &&
+        !floatingButtonRef.current.contains(event.target) &&
         showFloatingMenu
       ) {
         setShowFloatingMenu(false);
@@ -1929,7 +2777,18 @@ useEffect(() => {
   }, [showChatSearch, showThreeDotsMenu, showFloatingMenu, showUserMenu]);
 
   const filteredContacts = useMemo(() => {
-    let filtered = searchContacts(contacts, searchTerm);
+    // Start with recentChats as the base
+    let filtered = [...recentChats];
+
+    // Apply search term filter
+    if (searchTerm.trim()) {
+      const lowerSearch = searchTerm.toLowerCase();
+      filtered = filtered.filter(contact => {
+        const name = (contact.name || '').toLowerCase();
+        const lastMsg = (contact.lastMessage || '').toLowerCase();
+        return name.includes(lowerSearch) || lastMsg.includes(lowerSearch);
+      });
+    }
 
     // Filter by navigation item type
     switch (activeNavItem) {
@@ -1945,16 +2804,13 @@ useEffect(() => {
       case "documents":
         filtered = filtered.filter((contact) => contact.isDocument);
         break;
-      case "community":
-        filtered = filtered.filter((contact) => contact.isCommunity);
-        break;
       default:
         // Show all for default case
         break;
     }
 
     return filtered;
-  }, [contacts, searchTerm, activeNavItem]);
+  }, [recentChats, searchTerm, activeNavItem]);
 
   // Remove useMemo and calculate messages directly in render
   const getMessagesForContact = (contactId, searchTerm = "") => {
@@ -1965,16 +2821,19 @@ useEffect(() => {
 
     // If no search term, return all messages sorted by timestamp
     if (!searchTerm.trim()) {
-      return [...contactMessages].sort((a, b) => a.timestamp - b.timestamp);
+      const sorted = [...contactMessages].sort((a, b) => a.timestamp - b.timestamp);
+      return filterDuplicateSystemMessages(sorted);
     }
 
     // Filter messages by search term (case-insensitive)
-    return contactMessages
+    const filtered = contactMessages
       .filter((message) => {
         const text = message.text || message.content || "";
         return text.toLowerCase().includes(searchTerm.toLowerCase());
       })
       .sort((a, b) => a.timestamp - b.timestamp); // Optional: sort filtered messages too
+    
+    return filterDuplicateSystemMessages(filtered);
   };
 
   // Memoize input change handlers
@@ -2281,12 +3140,17 @@ const handleSendMessageFromInput = useCallback(
               timestamp: new Date(newMessage.createdAt || Date.now()).getTime(),
               isRead: false,
               attachments: attachments,
+              isSystemMessage: newMessage.type === 'system',
             };
 
-            setMessages((prev) => ({
-              ...prev,
-              [key]: [...(prev[key] || []), formatted],
-            }));
+            setMessages((prev) => {
+              const updatedMessages = [...(prev[key] || []), formatted];
+              const filtered = filterDuplicateSystemMessages(updatedMessages);
+              return {
+                ...prev,
+                [key]: filtered,
+              };
+            });
 
             // update recentChats/unread when not currently selected
             const preview = formatted.content || (formatted.attachments && formatted.attachments[0]?.fileName) || 'Attachment';
@@ -2317,6 +3181,50 @@ const handleSendMessageFromInput = useCallback(
             console.error('Error processing incoming socket message', err);
           }
         });
+
+        // Listen for pin/unpin events
+        socketRef.current.on('pin message', ({ chatId, pinnedMessages: updatedPinnedMessages }) => {
+          try {
+            const currentChatId = selectedContact?.id || selectedContact?._id;
+            if (String(chatId) === String(currentChatId)) {
+              setPinnedMessagesData(updatedPinnedMessages || []);
+              
+              // Update pinnedMessages state
+              const pinnedMap = {};
+              (updatedPinnedMessages || []).forEach(pinned => {
+                if (pinned.message) {
+                  const msgId = pinned.message._id || pinned.message.id || pinned.message;
+                  pinnedMap[msgId] = true;
+                }
+              });
+              setPinnedMessages(pinnedMap);
+            }
+          } catch (err) {
+            console.error('Error processing pin message event', err);
+          }
+        });
+
+        socketRef.current.on('unpin message', ({ chatId, pinnedMessages: updatedPinnedMessages }) => {
+          try {
+            const currentChatId = selectedContact?.id || selectedContact?._id;
+            if (String(chatId) === String(currentChatId)) {
+              setPinnedMessagesData(updatedPinnedMessages || []);
+              
+              // Update pinnedMessages state
+              const pinnedMap = {};
+              (updatedPinnedMessages || []).forEach(pinned => {
+                if (pinned.message) {
+                  const msgId = pinned.message._id || pinned.message.id || pinned.message;
+                  pinnedMap[msgId] = true;
+                }
+              });
+              setPinnedMessages(pinnedMap);
+            }
+          } catch (err) {
+            console.error('Error processing unpin message event', err);
+          }
+        });
+
       } catch (err) {
         console.error('Socket init error', err);
       }
@@ -2329,7 +3237,7 @@ const handleSendMessageFromInput = useCallback(
         if (socketRef.current) socketRef.current.disconnect();
       } catch (err) {}
     };
-  }, [API_BASE_URL]);
+  }, [API_BASE_URL, selectedContact]);
 
   const handleBackToContacts = useCallback(() => {
     if (isMobileView) {
@@ -2367,11 +3275,174 @@ const handleSendMessageFromInput = useCallback(
     setShowThreeDotsMenu(false);
   }, []);
 
-  const handlePinMessage = useCallback((messageId) => {
-    setPinnedMessages((prev) => ({
-      ...prev,
-      [messageId]: !prev[messageId],
-    }));
+  const handlePinMessage = useCallback(async (messageId) => {
+    const chatId = selectedContact?.id || selectedContact?._id;
+    if (!chatId) return;
+
+    const isPinned = pinnedMessages[messageId];
+    
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('chasmos_auth_token');
+      if (!token) {
+        console.error('No token found');
+        return;
+      }
+
+      const endpoint = isPinned ? '/api/message/unpin' : '/api/message/pin';
+      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ messageId, chatId }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        
+        // Check if it's the max pins error
+        if (errorData.message?.includes('Maximum 3 messages')) {
+          setPendingPinMessageId(messageId);
+          setShowPinReplaceModal(true);
+          return;
+        }
+        
+        throw new Error(errorData.message || 'Failed to pin/unpin message');
+      }
+
+      const data = await res.json();
+      
+      // Update local state
+      setPinnedMessages((prev) => ({
+        ...prev,
+        [messageId]: !isPinned,
+      }));
+
+      // Update pinned messages data
+      setPinnedMessagesData(data.pinnedMessages || []);
+
+      // Emit socket event for real-time sync
+      if (socketRef.current?.emit) {
+        socketRef.current.emit(isPinned ? 'unpin message' : 'pin message', {
+          messageId,
+          chatId,
+          pinnedMessages: data.pinnedMessages
+        });
+      }
+
+    } catch (err) {
+      console.error('Pin/unpin message failed', err);
+      alert(err.message || 'Failed to pin/unpin message');
+    }
+  }, [selectedContact, pinnedMessages, API_BASE_URL]);
+
+  const handleUnpinFromBar = useCallback(async (messageId) => {
+    await handlePinMessage(messageId);
+  }, [handlePinMessage]);
+
+  const handleReplaceOldestPin = useCallback(async () => {
+    const chatId = selectedContact?.chatId || selectedContact?._id;
+    if (!chatId || !pendingPinMessageId) return;
+
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('chasmos_auth_token');
+      if (!token) {
+        console.error('No token found');
+        return;
+      }
+
+      // Find the oldest pinned message
+      const oldestPinned = pinnedMessagesData.sort((a, b) => 
+        new Date(a.pinnedAt) - new Date(b.pinnedAt)
+      )[0];
+
+      if (!oldestPinned || !oldestPinned.message) {
+        throw new Error('Could not find oldest pinned message');
+      }
+
+      const oldestMessageId = oldestPinned.message._id || oldestPinned.message.id;
+
+      // First, unpin the oldest message
+      const unpinRes = await fetch(`${API_BASE_URL}/api/message/unpin`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ messageId: oldestMessageId, chatId }),
+      });
+
+      if (!unpinRes.ok) {
+        throw new Error('Failed to unpin oldest message');
+      }
+
+      // Then, pin the new message
+      const pinRes = await fetch(`${API_BASE_URL}/api/message/pin`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ messageId: pendingPinMessageId, chatId }),
+      });
+
+      if (!pinRes.ok) {
+        throw new Error('Failed to pin new message');
+      }
+
+      const data = await pinRes.json();
+
+      // Update local state
+      setPinnedMessages((prev) => ({
+        ...prev,
+        [oldestMessageId]: false,
+        [pendingPinMessageId]: true,
+      }));
+
+      // Update pinned messages data
+      setPinnedMessagesData(data.pinnedMessages || []);
+
+      // Emit socket events for real-time sync
+      if (socketRef.current?.emit) {
+        socketRef.current.emit('unpin message', {
+          messageId: oldestMessageId,
+          chatId,
+          pinnedMessages: data.pinnedMessages
+        });
+        socketRef.current.emit('pin message', {
+          messageId: pendingPinMessageId,
+          chatId,
+          pinnedMessages: data.pinnedMessages
+        });
+      }
+
+      // Close modal and reset state
+      setShowPinReplaceModal(false);
+      setPendingPinMessageId(null);
+
+    } catch (err) {
+      console.error('Replace pin failed', err);
+      alert(err.message || 'Failed to replace pinned message');
+      setShowPinReplaceModal(false);
+      setPendingPinMessageId(null);
+    }
+  }, [selectedContact, pendingPinMessageId, pinnedMessagesData, API_BASE_URL]);
+
+  const handleNavigateToPinnedMessage = useCallback((message) => {
+    // Scroll to the message in the chat
+    const messageId = message._id || message.id;
+    const messageElement = document.getElementById(`message-${messageId}`);
+    
+    if (messageElement) {
+      messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      
+      // Highlight the message briefly
+      messageElement.classList.add('highlight-message');
+      setTimeout(() => {
+        messageElement.classList.remove('highlight-message');
+      }, 2000);
+    }
   }, []);
 
   // Time-based cosmic overlay system
@@ -2429,19 +3500,8 @@ const handleSendMessageFromInput = useCallback(
 
   // Floating menu functions
   const toggleFloatingMenu = useCallback(() => {
-    const currentTime = Date.now();
-    const timeDiff = currentTime - lastClickTime;
-
-    // Handle double click (less than 300ms between clicks)
-    if (timeDiff < 300 && showFloatingMenu) {
-      setShowFloatingMenu(false);
-      setLastClickTime(0);
-      return;
-    }
-
-    setShowFloatingMenu(!showFloatingMenu);
-    setLastClickTime(currentTime);
-  }, [showFloatingMenu, lastClickTime]);
+    setShowFloatingMenu(prev => !prev);
+  }, []);
 
   const closeFloatingMenu = useCallback(() => {
     setShowFloatingMenu(false);
@@ -2502,7 +3562,7 @@ const handleSendMessageFromInput = useCallback(
 
   // Ref for chat search container (click-outside functionality)
 
-  // Fetch contacts from APi
+  // Fetch contacts from Api
 
   const [documentChats, setDocumentChats] = useState([]);
   // Filter accepted chats to exclude users already present in recentChats
@@ -2510,6 +3570,7 @@ const handleSendMessageFromInput = useCallback(
   if (!Array.isArray(acceptedChats) || acceptedChats.length === 0) return [];
   if (!Array.isArray(recentChats) || recentChats.length === 0) return acceptedChats;
 
+  // Create sets for both emails and IDs for comprehensive filtering
   const recentEmails = new Set(
     recentChats
       .map((r) => r.email || r.otherUser?.email)
@@ -2517,12 +3578,31 @@ const handleSendMessageFromInput = useCallback(
       .map((email) => email.toLowerCase())
   );
 
+  const recentChatIds = new Set(
+    recentChats
+      .map((r) => r.id || r._id || r.chatId)
+      .filter(Boolean)
+      .map((id) => String(id))
+  );
+
+  const recentUserIds = new Set(
+    recentChats
+      .map((r) => r.userId || r.otherUser?._id)
+      .filter(Boolean)
+      .map((id) => String(id))
+  );
+
   return acceptedChats.filter((a) => {
     const email = (a.email || "").toLowerCase();
-    return !recentEmails.has(email);
+    const chatId = String(a.id || a._id || a.chatId || "");
+    const userId = String(a.userId || a._id || "");
+    
+    // Filter out if email, chatId, or userId matches any in recent chats
+    return !recentEmails.has(email) && 
+           !recentChatIds.has(chatId) && 
+           !recentUserIds.has(userId);
   });
 }, [acceptedChats, recentChats]);
-
 
   const [isExpanded, setIsExpanded] = useState(true);
 
@@ -2570,8 +3650,6 @@ const handleSendMessageFromInput = useCallback(
 
   // 🔹 Message input state
   const [messageInput, setMessageInput] = useState("");
-
-  // 🔹 Theme object example (you can replace with your real theme)
 
   // 🔹 Function to send message (triggered by Enter key or Send button)
   const handleSendClick = useCallback(() => {
@@ -2728,6 +3806,8 @@ const handleSendMessageFromInput = useCallback(
       if (
         floatingMenuRef.current &&
         !floatingMenuRef.current.contains(event.target) &&
+        floatingButtonRef.current &&
+        !floatingButtonRef.current.contains(event.target) &&
         showFloatingMenu
       ) {
         setShowFloatingMenu(false);
@@ -2861,10 +3941,115 @@ useEffect(() => {
       </style>
 
       {/* Blocked users modal */}
+      {/* Block confirmation modal */}
+      {showBlockConfirmModal && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+          onClick={() => {
+            setShowBlockConfirmModal(false);
+            setUserToBlock(null);
+          }}
+        >
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            onClick={(e) => e.stopPropagation()}
+            className={`${effectiveTheme.secondary} rounded-lg shadow-2xl w-[90%] max-w-md overflow-hidden`}
+          >
+            {/* Header */}
+            <div className="px-6 py-5">
+              <h2 className={`text-xl font-semibold ${effectiveTheme.text} flex items-center gap-2`}>
+                Block {userToBlock?.name || userToBlock?.chatName || 'User'}
+                ?
+              </h2>
+              <p className={`${effectiveTheme.textSecondary} mt-3 text-sm leading-relaxed`}>
+                This person won't be able to message or call you. They won't know you blocked them.
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3 px-6 py-4 bg-gray-50 dark:bg-gray-800/50">
+              <button
+                onClick={confirmBlockUser}
+                className="flex-1 px-4 py-3 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
+              >
+                Block
+              </button>
+              <button
+                onClick={() => {
+                  setShowBlockConfirmModal(false);
+                  setUserToBlock(null);
+                }}
+                className="flex-1 px-4 py-3 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 font-medium rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+
+      {/* Pin Replace Modal */}
+      {showPinReplaceModal && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+          onClick={() => {
+            setShowPinReplaceModal(false);
+            setPendingPinMessageId(null);
+          }}
+        >
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            onClick={(e) => e.stopPropagation()}
+            className={`${effectiveTheme.secondary} rounded-lg shadow-2xl w-[90%] max-w-md overflow-hidden`}
+          >
+            {/* Header */}
+            <div className="px-6 py-5">
+              <h2 className={`text-xl font-semibold ${effectiveTheme.text}`}>
+                Replace oldest pin?
+              </h2>
+              <p className={`${effectiveTheme.textSecondary} mt-3 text-sm leading-relaxed`}>
+                Your new pin will replace the oldest one.
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3 px-6 py-4 bg-gray-50 dark:bg-gray-800/50">
+              <button
+                onClick={handleReplaceOldestPin}
+                className="flex-1 px-4 py-3 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
+              >
+                Continue
+              </button>
+              <button
+                onClick={() => {
+                  setShowPinReplaceModal(false);
+                  setPendingPinMessageId(null);
+                }}
+                className="flex-1 px-4 py-3 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 font-medium rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+
       {showBlockedModal && (
         <BlockedUsers
           onClose={() => setShowBlockedModal(false)}
           effectiveTheme={effectiveTheme}
+          onUnblock={handleUnblockUser}
+          selectedContact={selectedContact}
         />
       )}
 
@@ -2874,8 +4059,43 @@ useEffect(() => {
           onClose={() => setShowArchiveModal(false)}
           effectiveTheme={effectiveTheme}
           onOpenChat={handleOpenChatFromArchive}
+          onUnarchive={handleUnarchiveChat}
         />
       )}
+
+      {/* Media, Links & Docs Viewer */}
+      {showMediaViewer && (
+        <MediaLinksDocsViewer
+          onClose={() => setShowMediaViewer(false)}
+          effectiveTheme={effectiveTheme}
+          contacts={contacts}
+          selectedContact={selectedContact}
+        />
+      )}
+
+      {/* Forward message modal */}
+      <ForwardMessageModal
+        isOpen={showForwardModal}
+        onClose={() => {
+          setShowForwardModal(false);
+          setMessageToForward(null);
+        }}
+        onForward={handleForwardToChats}
+        contacts={recentChats}
+        effectiveTheme={effectiveTheme}
+        currentUserId={currentUserId}
+      />
+
+      {/* Delete message modal */}
+      <DeleteMessageModal
+        isOpen={showDeleteModal}
+        onClose={() => {
+          setShowDeleteModal(false);
+          setMessageToDelete(null);
+        }}
+        onConfirmDelete={confirmDeleteMessage}
+        effectiveTheme={effectiveTheme}
+      />
 
       <div
         className={`fixed inset-0 w-full h-full flex overflow-hidden transition-all duration-1000 ${
@@ -3029,21 +4249,6 @@ useEffect(() => {
             >
               <Folder className="w-5 h-5" />
             </motion.button>
-
-            {/* Community */}
-            <motion.button
-              whileHover={{ scale: 1.1 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => navigate('/community')}
-              className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-200 ${
-                activeNavItem === "community"
-                  ? `${effectiveTheme.accent} text-white shadow-lg`
-                  : `${effectiveTheme.hover} ${effectiveTheme.textSecondary} hover:${effectiveTheme.text}`
-              }`}
-              title="Community"
-            >
-              <Globe className="w-5 h-5" />
-            </motion.button>
           </div>
 
           {/* Bottom Navigation Items */}
@@ -3095,7 +4300,7 @@ useEffect(() => {
         <AnimatePresence mode="wait">
           {showSidebar &&
             !(isMobileView && (showGroupCreation || showNewChat)) &&
-            !['community', 'profile', 'settings'].includes(activeSection) && (
+            !['profile', 'settings'].includes(activeSection) && (
               <motion.div
   initial={{ x: isMobileView ? -300 : -100, opacity: 0 }}
   animate={{
@@ -3163,7 +4368,7 @@ useEffect(() => {
                         </div>
                       </h1>
                     </div>
-                    <div className="flex items-center">
+                    <div className="flex items-center gap-2">
                       <button
                         title="Open archived chats"
                         onClick={() => setShowArchiveModal(true)}
@@ -3171,6 +4376,46 @@ useEffect(() => {
                       >
                         <Archive className="w-5 h-5" />
                       </button>
+                      <div className="relative" ref={moreMenuRef}>
+                        <button
+                          title="More options"
+                          onClick={() => setShowMoreMenu(!showMoreMenu)}
+                          className={`p-2 rounded ${effectiveTheme.hover} ${effectiveTheme.text}`}
+                        >
+                          <MoreVertical className="w-5 h-5" />
+                        </button>
+                        <AnimatePresence>
+                          {showMoreMenu && (
+                            <motion.div
+                              initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                              animate={{ opacity: 1, scale: 1, y: 0 }}
+                              exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                              className={`absolute right-0 mt-2 w-56 ${effectiveTheme.secondary} border ${effectiveTheme.border} rounded-lg shadow-xl z-50 overflow-hidden`}
+                            >
+                              <button
+                                onClick={() => {
+                                  setShowBlockedModal(true);
+                                  setShowMoreMenu(false);
+                                }}
+                                className={`w-full flex items-center gap-3 px-4 py-3 ${effectiveTheme.hover} ${effectiveTheme.text} transition-colors`}
+                              >
+                                <UserMinus className="w-5 h-5" />
+                                <span>Blocked Users</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setShowMediaViewer(true);
+                                  setShowMoreMenu(false);
+                                }}
+                                className={`w-full flex items-center gap-3 px-4 py-3 ${effectiveTheme.hover} ${effectiveTheme.text} transition-colors`}
+                              >
+                                <FileText className="w-5 h-5" />
+                                <span>Media, Links & Docs</span>
+                              </button>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
                     </div>
                   </div>
 
@@ -3426,147 +4671,421 @@ useEffect(() => {
   {activeSection === 'documents' ? (
     /* Documents List */
     <>
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                      {/* Header with dropdown toggle */}
-                      <div
-                        className="flex items-center justify-between cursor-pointer"
-                        onClick={() => setIsExpanded(!isExpanded)}
-                      >
-                        <h4 className="text-gray-300 dark:text-gray-100 font-semibold">
-                          Document History
-                        </h4>
-                        {isExpanded ? (
-                          <ChevronUp className="w-5 h-5 text-gray-500" />
-                        ) : (
-                          <ChevronDown className="w-5 h-5 text-gray-500" />
-                        )}
+  <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+    {/* Header with dropdown toggle */}
+    <div
+      className="flex items-center justify-between cursor-pointer"
+      onClick={() => setIsExpanded(!isExpanded)}
+    >
+      <h4 className={`font-semibold ${effectiveTheme.text}`}>
+        Document History
+      </h4>
+
+      {isExpanded ? (
+        <ChevronUp className={`w-5 h-5 ${effectiveTheme.textSecondary}`} />
+      ) : (
+        <ChevronDown className={`w-5 h-5 ${effectiveTheme.textSecondary}`} />
+      )}
+    </div>
+
+    {/* Animated Dropdown */}
+    <AnimatePresence initial={false}>
+      {isExpanded && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          exit={{ opacity: 0, height: 0 }}
+          transition={{ duration: 0.3 }}
+          className="space-y-3 overflow-hidden"
+        >
+          {loading ? (
+            <div className={`text-center py-4 ${effectiveTheme.textSecondary}`}>
+              Loading...
+            </div>
+          ) : (
+            <>
+              {/* 📌 PINNED DOCUMENTS */}
+              {pinnedDocs.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className={`text-sm font-semibold ${effectiveTheme.text}`}>
+                    📌 Pinned
+                  </h4>
+
+                  {pinnedDocs.map((doc) => (
+                    <motion.div
+                      key={doc._id}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.97 }}
+                      onClick={() => {
+                        if (!selectedDocument || selectedDocument._id !== doc._id) {
+                          setSelectedDocument(doc);
+                          setIsNewDocumentChat(false);
+                        }
+                      }}
+                      className={`p-3 rounded-lg cursor-pointer transition-all duration-200 
+                        ${effectiveTheme.secondary} border ${effectiveTheme.border} hover:${effectiveTheme.hover}
+                        flex justify-between items-center`}
+                    >
+                      {/* Text */}
+                      <div className="flex flex-col">
+                        <p className={`font-medium truncate ${effectiveTheme.text}`}>
+                          {doc.fileName || "Untitled Document"}
+                        </p>
+                        <p className={`text-xs truncate mt-0.5 ${effectiveTheme.textSecondary}`}>
+                          {doc.updatedAt
+                            ? new Date(doc.updatedAt).toLocaleString()
+                            : "No date"}
+                        </p>
                       </div>
 
-                      {/* Animated Dropdown */}
-                      <AnimatePresence initial={false}>
-                        {isExpanded && (
-                          <motion.div
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: "auto" }}
-                            exit={{ opacity: 0, height: 0 }}
-                            transition={{ duration: 0.3 }}
-                            className="space-y-3 overflow-hidden"
-                          >
-                            {loading ? (
-                              <div className="text-gray-500 text-center py-4">
-                                Loading...
-                              </div>
-                            ) : documentChats.length > 0 ? (
-                              documentChats.map((doc) => (
-                                <motion.div
-                                  key={doc._id}
-                                  whileHover={{ scale: 1.02 }}
-                                  whileTap={{ scale: 0.97 }}
-                                  onClick={() => {
-                                    if (
-                                      !selectedDocument ||
-                                      selectedDocument._id !== doc._id
-                                    ) {
-                                      setSelectedDocument(doc);
-                                      setIsNewDocumentChat(false);
-                                    }
-                                  }}
-                                  className={`p-3 rounded-lg cursor-pointer transition-all duration-200 
-                ${effectiveTheme.secondary || "bg-white dark:bg-[#1f1f1f]"} 
-                border ${effectiveTheme.border} hover:${effectiveTheme.hover}`}
-                                >
-                                  <div className="flex flex-col">
-                                    <p className="font-medium truncate text-gray-300 dark:text-gray-200">
-                                      {doc.fileName || "Untitled Document"}
-                                    </p>
-                                   <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
-  {doc.updatedAt
-    ? new Date(doc.updatedAt).toLocaleString()
-    : "No date available"}
-</p>
-
-                                  </div>
-                                </motion.div>
-                              ))
-                            ) : (
-                              <div
-                                className={`w-full flex items-center justify-center px-4 py-3 rounded-lg ${
-                                  effectiveTheme.searchBg ||
-                                  "bg-gray-100 dark:bg-gray-800"
-                                } text-gray-400 dark:text-gray-400`}
-                              >
-                                No document history found
-                              </div>
-                            )}
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-
-                      {/* 🆕 Floating New Chat Button */}
-                      <div className="flex justify-center mt-8">
-                        <motion.button
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          whileHover={{ scale: 1.05 }}
-                          whileTap={{ scale: 0.95 }}
-                          transition={{ type: "spring", stiffness: 220 }}
-                          onClick={() => {
-                            setSelectedDocument(null);
-                            setIsNewDocumentChat(true);
+                      {/* PIN + DELETE icons */}
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            togglePin(doc._id, true);
                           }}
-                          className={`flex items-center space-x-3 ${effectiveTheme.secondary} px-5 py-3 rounded-xl shadow-lg border ${effectiveTheme.border} hover:${effectiveTheme.hover} transition-all duration-200 group`}
+                          className="p-2"
                         >
-                          <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center shadow-md">
-                            <MessageSquare className="w-5 h-5 text-white" />
-                          </div>
-                          <span
-                            className={`${effectiveTheme.text} font-semibold`}
-                          >
-                            New Chat
-                          </span>
-                        </motion.button>
+                          <PinOff className="w-5 h-5 text-yellow-500" />
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteDocument(doc._id);
+                          }}
+                          className="p-2"
+                        >
+                          <Trash2 className="w-5 h-5 text-red-500" />
+                        </button>
                       </div>
-                    </div>
-    </>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+
+              {/* 🗂️ NORMAL UNPINNED DOCUMENTS */}
+              <div className="space-y-2 mt-4">
+                <h4 className={`text-sm font-semibold ${effectiveTheme.text}`}>
+                  📄 All Documents
+                </h4>
+
+                {documentChats
+                  .filter((d) => !d.isPinned)
+                  .map((doc) => (
+                    <motion.div
+                      key={doc._id}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.97 }}
+                      onClick={() => {
+                        if (!selectedDocument || selectedDocument._id !== doc._id) {
+                          setSelectedDocument(doc);
+                          setIsNewDocumentChat(false);
+                        }
+                      }}
+                      className={`p-3 rounded-lg cursor-pointer transition-all duration-200 
+                        ${effectiveTheme.secondary} border ${effectiveTheme.border} hover:${effectiveTheme.hover}
+                        flex justify-between items-center`}
+                    >
+                      <div className="flex flex-col">
+                        <p className={`font-medium truncate ${effectiveTheme.text}`}>
+                          {doc.fileName || "Untitled Document"}
+                        </p>
+                        <p className={`text-xs truncate mt-0.5 ${effectiveTheme.textSecondary}`}>
+                          {doc.updatedAt
+                            ? new Date(doc.updatedAt).toLocaleString()
+                            : "No date available"}
+                        </p>
+                      </div>
+
+                      {/* PIN + DELETE icons */}
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            togglePin(doc._id, false);
+                          }}
+                          className="p-2"
+                        >
+                          <Pin className={`w-5 h-5 ${effectiveTheme.textSecondary}`} />
+                        </button>
+<button
+  onClick={(e) => {
+    e.stopPropagation();
+    askDelete(doc._id); // instead of window.confirm
+  }}
+  className="p-2"
+>
+  <Trash2 className="w-5 h-5 text-red-500" />
+</button>
+
+                      </div>
+                    </motion.div>
+                  ))}
+              </div>
+            </>
+          )}
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+    {/* 🆕 Floating New Chat Button */}
+    <div className="flex justify-center mt-8">
+      <motion.button
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+        transition={{ type: "spring", stiffness: 220 }}
+        onClick={() => {
+          setSelectedDocument(null);
+          setIsNewDocumentChat(true);
+        }}
+        className={`flex items-center space-x-3 ${effectiveTheme.secondary} px-5 py-3 rounded-xl shadow-lg border ${effectiveTheme.border} hover:${effectiveTheme.hover} transition-all duration-200 group`}
+      >
+        <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center shadow-md">
+          <MessageSquare className="w-5 h-5 text-white" />
+        </div>
+
+        <span className={`font-semibold ${effectiveTheme.text}`}>
+          New Chat
+        </span>
+      </motion.button>
+    </div>
+  </div>
+</>
+
+//  <>
+//   <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+//     {/* Header with dropdown toggle */}
+//     <div
+//       className="flex items-center justify-between cursor-pointer"
+//       onClick={() => setIsExpanded(!isExpanded)}
+//     >
+//       <h4 className="text-gray-900 dark:text-gray-100 font-semibold">
+//         Document History
+//       </h4>
+
+//       {isExpanded ? (
+//         <ChevronUp className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+//       ) : (
+//         <ChevronDown className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+//       )}
+//     </div>
+
+//     {/* Animated Dropdown */}
+//     <AnimatePresence initial={false}>
+//       {isExpanded && (
+//         <motion.div
+//           initial={{ opacity: 0, height: 0 }}
+//           animate={{ opacity: 1, height: "auto" }}
+//           exit={{ opacity: 0, height: 0 }}
+//           transition={{ duration: 0.3 }}
+//           className="space-y-3 overflow-hidden"
+//         >
+//           {loading ? (
+//             <div className="text-gray-600 dark:text-gray-400 text-center py-4">
+//               Loading...
+//             </div>
+//           ) : (
+//             <>
+//               {/* 📌 PINNED DOCUMENTS */}
+//               {pinnedDocs.length > 0 && (
+//                 <div className="space-y-3">
+//                   <h4 className="text-gray-800 dark:text-gray-200 text-sm font-semibold">
+//                     📌 Pinned
+//                   </h4>
+
+//                   {pinnedDocs.map((doc) => (
+//                     <motion.div
+//                       key={doc._id}
+//                       whileHover={{ scale: 1.02 }}
+//                       whileTap={{ scale: 0.97 }}
+//                       onClick={() => {
+//                         if (!selectedDocument || selectedDocument._id !== doc._id) {
+//                           setSelectedDocument(doc);
+//                           setIsNewDocumentChat(false);
+//                         }
+//                       }}
+//                       className={`p-3 rounded-lg cursor-pointer transition-all duration-200 
+//                         ${effectiveTheme.secondary} border ${effectiveTheme.border} hover:${effectiveTheme.hover}
+//                         flex justify-between items-center`}
+//                     >
+//                       {/* Text */}
+//                       <div className="flex flex-col">
+//                         <p className="font-medium truncate text-gray-900 dark:text-gray-200">
+//                           {doc.fileName || "Untitled Document"}
+//                         </p>
+//                         <p className="text-xs text-gray-600 dark:text-gray-400 truncate mt-0.5">
+//                           {doc.updatedAt
+//                             ? new Date(doc.updatedAt).toLocaleString()
+//                             : "No date"}
+//                         </p>
+//                       </div>
+
+//                       {/* UNPIN button */}
+//                       <button
+//                         onClick={(e) => {
+//                           e.stopPropagation();
+//                           togglePin(doc._id, true);
+//                         }}
+//                         className="p-2"
+//                       >
+//                         <PinOff className="w-5 h-5 text-yellow-500" />
+//                       </button>
+//                     </motion.div>
+//                   ))}
+//                 </div>
+//               )}
+
+//               {/* 🗂️ NORMAL UNPINNED DOCUMENTS */}
+//               <div className="space-y-2 mt-4">
+//                 <h4 className="text-gray-800 dark:text-gray-200 text-sm font-semibold">
+//                   📄 All Documents
+//                 </h4>
+
+//                 {documentChats
+//                   .filter((d) => !d.isPinned)
+//                   .map((doc) => (
+//                     <motion.div
+//                       key={doc._id}
+//                       whileHover={{ scale: 1.02 }}
+//                       whileTap={{ scale: 0.97 }}
+//                       onClick={() => {
+//                         if (!selectedDocument || selectedDocument._id !== doc._id) {
+//                           setSelectedDocument(doc);
+//                           setIsNewDocumentChat(false);
+//                         }
+//                       }}
+//                       className={`p-3 rounded-lg cursor-pointer transition-all duration-200 
+//                         ${effectiveTheme.secondary} border ${effectiveTheme.border} hover:${effectiveTheme.hover}
+//                         flex justify-between items-center`}
+//                     >
+//                       <div className="flex flex-col">
+//                         <p className="font-medium truncate text-gray-900 dark:text-gray-200">
+//                           {doc.fileName || "Untitled Document"}
+//                         </p>
+//                         <p className="text-xs text-gray-600 dark:text-gray-400 truncate mt-0.5">
+//                           {doc.updatedAt
+//                             ? new Date(doc.updatedAt).toLocaleString()
+//                             : "No date available"}
+//                         </p>
+//                       </div>
+
+//                       {/* PIN button */}
+//                       <button
+//                         onClick={(e) => {
+//                           e.stopPropagation();
+//                           togglePin(doc._id, false); // pin
+//                         }}
+//                         className="p-2"
+//                       >
+//                         <Pin className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+//                       </button>
+//                     </motion.div>
+//                   ))}
+//               </div>
+//             </>
+//           )}
+//         </motion.div>
+//       )}
+//     </AnimatePresence>
+
+//     {/* 🆕 Floating New Chat Button */}
+//     <div className="flex justify-center mt-8">
+//       <motion.button
+//         initial={{ opacity: 0, y: 10 }}
+//         animate={{ opacity: 1, y: 0 }}
+//         whileHover={{ scale: 1.05 }}
+//         whileTap={{ scale: 0.95 }}
+//         transition={{ type: "spring", stiffness: 220 }}
+//         onClick={() => {
+//           setSelectedDocument(null);
+//           setIsNewDocumentChat(true);
+//         }}
+//         className={`flex items-center space-x-3 ${effectiveTheme.secondary} px-5 py-3 rounded-xl shadow-lg border ${effectiveTheme.border} hover:${effectiveTheme.hover} transition-all duration-200 group`}
+//       >
+//         <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center shadow-md">
+//           <MessageSquare className="w-5 h-5 text-white" />
+//         </div>
+
+//         <span className="text-gray-900 dark:text-gray-100 font-semibold">
+//           New Chat
+//         </span>
+//       </motion.button>
+//     </div>
+//   </div>
+// </>
+
+
   ) : (
     /* Regular Chats and Contacts */
     <>
-      {/* Recent Chats */}
-      {recentChats.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <h4 className={`font-semibold ${effectiveTheme.mode === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
-            Recent Chats
-          </h4>
-          {recentChats.map((chat) => (
-            <ContactItem
-              key={chat.id}
-              contact={chat}
-              effectiveTheme={effectiveTheme}
-              onSelect={(c) => handleOpenChat(c)}
-            />
-          ))}
-        </div>
-      )}
+      {/* Show filtered results when searching, otherwise show recent chats and contacts */}
+      {searchTerm.trim() ? (
+        <>
+          {filteredContacts.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              {filteredContacts.map((contact) => (
+                <ContactItem
+                  key={contact.id}
+                  contact={contact}
+                  effectiveTheme={effectiveTheme}
+                  onSelect={(c) => handleOpenChat(c)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="text-center space-y-4 mt-10">
+              <p className={effectiveTheme.mode === 'dark' ? 'text-gray-400' : 'text-gray-500'}>
+                No chats found matching "{searchTerm}"
+              </p>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          {/* Recent Chats */}
+          {recentChats.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <h4 className={`font-semibold ${effectiveTheme.mode === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
+                Recent Chats
+              </h4>
+              {recentChats.map((chat) => (
+                <ContactItem
+                  key={chat.id}
+                  contact={chat}
+                  effectiveTheme={effectiveTheme}
+                  onSelect={(c) => handleOpenChat(c)}
+                />
+              ))}
+            </div>
+          )}
 
-      {/* All Contacts */}
-      {contacts.length > 0 && (
-        <div className="flex flex-col gap-2 mt-4">
-          <h4 className={`font-semibold ${effectiveTheme.mode === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
-            Contacts
-          </h4>
-          {contacts.map((contact) => (
-            <ContactItem
-              key={contact.id}
-              contact={contact}
-              effectiveTheme={effectiveTheme}
-              onSelect={(c) => handleOpenChat(c)}
-            />
-          ))}
-        </div>
+          {/* All Contacts */}
+          {contacts.length > 0 && (
+            <div className="flex flex-col gap-2 mt-4">
+              <h4 className={`font-semibold ${effectiveTheme.mode === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
+                Contacts
+              </h4>
+              {contacts.map((contact) => (
+                <ContactItem
+                  key={contact.id}
+                  contact={contact}
+                  effectiveTheme={effectiveTheme}
+                  onSelect={(c) => handleOpenChat(c)}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {/* Empty State */}
-      {recentChats.length === 0 && contacts.length === 0 && (
+      {!searchTerm.trim() && recentChats.length === 0 && contacts.length === 0 && (
         <div className="text-center space-y-4 mt-10">
           <p className={effectiveTheme.mode === 'dark' ? 'text-gray-400' : 'text-gray-500'}>
             Start chatting with Chasmos!
@@ -3594,7 +5113,7 @@ useEffect(() => {
                       initial={{ opacity: 0, scale: 0.8, y: 20 }}
                       animate={{ opacity: 1, scale: 1, y: 0 }}
                       exit={{ opacity: 0, scale: 0.8, y: 20 }}
-                      transition={{ duration: 0.2 }}
+                      transition={{ duration: 0.4 }}
                       className={`absolute ${isMobileView ? "bottom-20 right-6 fixed" : "bottom-20 right-6"} flex flex-col space-y-3 z-30`}
                     >
                       {/* Create Group */}
@@ -3617,7 +5136,7 @@ useEffect(() => {
                        <motion.button
                                               initial={{ opacity: 0, x: 20 }}
                                               animate={{ opacity: 1, x: 0 }}
-                                              transition={{ delay: 0.1 }}
+                                              transition={{ delay: 0.15 }}
                                               onClick={handleCreateGroup}
                                               className={`flex items-center space-x-3 ${effectiveTheme.secondary} px-4 py-3 rounded-lg shadow-lg border ${effectiveTheme.border} hover:${effectiveTheme.hover} transition-colors group`}
                                             >
@@ -3635,7 +5154,7 @@ useEffect(() => {
                       <motion.button
                         initial={{ opacity: 0, x: 20 }}
                         animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: 0.15 }}
+                        transition={{ delay: 0.25 }}
                         onClick={handleNewChat}
                         className={`flex items-center space-x-3 ${effectiveTheme.secondary} px-4 py-3 rounded-lg shadow-lg border ${effectiveTheme.border} hover:${effectiveTheme.hover} transition-colors group`}
                       >
@@ -3653,7 +5172,7 @@ useEffect(() => {
                       <motion.button
                         initial={{ opacity: 0, x: 20 }}
                         animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: 0.2 }}
+                        transition={{ delay: 0.35 }}
                         onClick={handleInviteUser}
                         className={`flex items-center space-x-3 ${effectiveTheme.secondary} px-4 py-3 rounded-lg shadow-lg border ${effectiveTheme.border} hover:${effectiveTheme.hover} transition-colors group`}
                       >
@@ -3671,6 +5190,7 @@ useEffect(() => {
 
                   {/* Main Floating Button */}
                   <motion.button
+                    ref={floatingButtonRef}
                     whileHover={{
                       scale: 1.1,
                       rotate: [0, -10, 10, -10, 0],
@@ -3688,7 +5208,7 @@ useEffect(() => {
                         ease: "easeInOut",
                       },
                     }}
-                    className={`absolute ${isMobileView ? "bottom-6 right-6 fixed" : "bottom-6 right-6"} w-16 h-16 rounded-full flex items-center justify-center text-white transition-all duration-300 z-20 group`}
+                    className={`absolute ${isMobileView ? "bottom-6 right-6 fixed" : "bottom-6 right-6"} w-14 h-14 rounded-full flex items-center justify-center text-white transition-all duration-300 z-20 group`}
                     style={{
                       background: showFloatingMenu
                         ? "linear-gradient(135deg, #ef4444 0%, #dc2626 100%)"
@@ -3698,7 +5218,9 @@ useEffect(() => {
                         : "0 8px 25px rgba(59, 130, 246, 0.3)",
                       border: "none",
                     }}
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
                       toggleFloatingMenu();
                     }}
                   >
@@ -3714,9 +5236,9 @@ useEffect(() => {
                       className="relative"
                     >
                       {showFloatingMenu ? (
-                        <X className="w-7 h-7 text-white" />
+                        <X className="w-6 h-6 text-white" />
                       ) : (
-                        <MessageSquare className="w-7 h-7 text-white" />
+                        <MessageSquare className="w-6 h-6 text-white" />
                       )}
                     </motion.div>
 
@@ -3744,12 +5266,7 @@ useEffect(() => {
           key={selectedContact?.id || selectedDocument?._id || "no-contact"}
           className="flex-1 flex flex-col relative h-full overflow-hidden"
         >
-          {activeSection === "community" ? (
-            <Community 
-              effectiveTheme={effectiveTheme}
-              onClose={() => navigate('/chats')}
-            />
-          ) : activeSection === "profile" ? (
+          {activeSection === "profile" ? (
             <Profile
               effectiveTheme={effectiveTheme}
               onClose={() => navigate('/chats')}
@@ -3866,7 +5383,7 @@ useEffect(() => {
             />
           ) : showNewChat ? (
             <NewChat
-              contacts={contacts}
+              existingContacts={[...googleContacts, ...contacts]}
               effectiveTheme={effectiveTheme}
               onClose={handleCloseNewChat}
               onStartChat={handleStartNewChat}
@@ -3910,6 +5427,15 @@ useEffect(() => {
                 isBlocked={isBlockedState}
                 isArchived={isArchivedState}
               />
+              
+              {/* Pinned Messages Bar */}
+              <PinnedMessagesBar
+                pinnedMessages={pinnedMessagesData}
+                onUnpin={handleUnpinFromBar}
+                onNavigateToMessage={handleNavigateToPinnedMessage}
+                effectiveTheme={effectiveTheme}
+              />
+              
               <div className="flex-1 overflow-hidden relative">
                 {/* Hovered message date (overlay, does not affect layout) */}
                 <div className="absolute top-3 left-1/2 transform -translate-x-1/2 z-40 pointer-events-none">
@@ -3941,7 +5467,9 @@ useEffect(() => {
                   isTyping={isTyping}
                   selectedContactId={selectedContact.id}
                   currentUserId={currentUserId}
-                    onDeleteMessage={handleDeleteMessage}
+                  onDeleteMessage={handleDeleteMessage}
+                  onForwardMessage={handleForwardMessage}
+                  onEditMessage={handleEditMessage}
                 />
               </div>
               <MessageInput

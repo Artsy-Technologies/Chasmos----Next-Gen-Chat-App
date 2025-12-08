@@ -2,6 +2,8 @@ import asyncHandler from "express-async-handler";
 import Message from "../models/message.model.js";
 import Chat from "../models/chat.model.js";
 import User from "../models/user.model.js";
+import Attachment from "../models/attachment.model.js";
+import { deleteFileFromSupabase } from "../utils/supabaseHelper.js";
 
 export const allMessages = asyncHandler(async (req, res) => {
   try {
@@ -76,7 +78,7 @@ export const deleteMessage = asyncHandler(async (req, res) => {
   const { messageId } = req.params;
   const userId = req.user._id;
 
-  const message = await Message.findById(messageId);
+  const message = await Message.findById(messageId).populate('attachments');
   if (!message) {
     res.status(404);
     throw new Error("Message not found");
@@ -94,6 +96,32 @@ export const deleteMessage = asyncHandler(async (req, res) => {
   if (!isSender && !isGroupAdmin) {
     res.status(403);
     throw new Error("Not authorized to delete this message");
+  }
+
+  // Delete attachments if any
+  if (message.attachments && message.attachments.length > 0) {
+    for (const attachment of message.attachments) {
+      try {
+        // Extract file path from URL for deletion
+        if (attachment.fileUrl) {
+          const urlParts = attachment.fileUrl.split('/');
+          const bucketIndex = urlParts.findIndex(part => part === 'storage');
+          if (bucketIndex !== -1 && urlParts[bucketIndex + 2]) {
+            const bucket = urlParts[bucketIndex + 2];
+            const filePath = urlParts.slice(bucketIndex + 3).join('/');
+            
+            // Delete file from Supabase storage
+            await deleteFileFromSupabase(filePath, bucket);
+          }
+        }
+        
+        // Delete attachment document from database
+        await Attachment.findByIdAndDelete(attachment._id);
+      } catch (err) {
+        console.error(`Failed to delete attachment ${attachment._id}:`, err.message);
+        // Continue with other attachments even if one fails
+      }
+    }
   }
 
   await Message.findByIdAndDelete(messageId);
@@ -125,6 +153,45 @@ export const deleteMessagesForMe = asyncHandler(async (req, res) => {
   }
 
   res.json({ message: "Message deleted for you" });
+});
+
+export const editMessage = asyncHandler(async (req, res) => {
+  const { messageId } = req.params;
+  const { content } = req.body;
+  const userId = req.user._id;
+
+  if (!content || !content.trim()) {
+    res.status(400);
+    throw new Error("Message content is required");
+  }
+
+  const message = await Message.findById(messageId);
+  if (!message) {
+    res.status(404);
+    throw new Error("Message not found");
+  }
+
+  // Only the sender can edit the message
+  if (message.sender.toString() !== userId.toString()) {
+    res.status(403);
+    throw new Error("You can only edit your own messages");
+  }
+
+  // Update the message
+  message.content = content.trim();
+  message.isEdited = true;
+  message.editedAt = new Date();
+
+  await message.save();
+
+  // Populate necessary fields
+  await message.populate("sender", "name avatar email");
+  await message.populate("attachments");
+
+  res.json({
+    message: "Message edited successfully",
+    updatedMessage: message
+  });
 });
 
 export const starMessage = asyncHandler(async (req, res) => {
@@ -257,4 +324,501 @@ export const removeReaction = asyncHandler(async (req, res) => {
     message: "Reaction removed successfully",
     reactions: message.reactions
   });
+});
+
+export const forwardMessage = asyncHandler(async (req, res) => {
+  console.log("➡️ [FORWARD MESSAGE] Request received");
+  console.log("📥 Body:", req.body);
+  console.log("👤 User:", req.user?._id);
+
+  const { content, chatId, attachments, type = "text", isForwarded = true } = req.body;
+
+  // Validate basic input
+  if (!content && (!attachments || attachments.length === 0)) {
+    console.log("❌ Validation failed: No content or attachments provided");
+    return res.sendStatus(400);
+  }
+
+  if (!chatId) {
+    console.log("❌ Validation failed: chatId missing");
+    res.status(400);
+    throw new Error("Chat ID is required");
+  }
+
+  console.log(`🔍 Fetching chat: ${chatId}`);
+  const chat = await Chat.findById(chatId);
+
+  if (!chat) {
+    console.log("❌ Chat not found");
+    res.status(404);
+    throw new Error("Chat not found");
+  }
+
+  console.log("👥 Chat users:", chat.users);
+
+  // Check if user is part of the chat
+  const isUserInChat = chat.users.some(
+    (user) => user.toString() === req.user._id.toString()
+  );
+
+  if (!isUserInChat) {
+    console.log(`🚫 User ${req.user._id} not authorized to send messages in chat ${chatId}`);
+    res.status(403);
+    throw new Error("You are not authorized to send messages to this chat");
+  }
+
+  // Block check (only 1-to-1 chats)
+  if (!chat.isGroupChat) {
+    const otherUser = chat.users.find(
+      (user) => user.toString() !== req.user._id.toString()
+    );
+    console.log("🔎 Checking block status. Other user:", otherUser);
+
+    if (otherUser) {
+      const userDoc = await User.findById(otherUser);
+      console.log("🧾 Other user doc:", userDoc);
+
+      if (userDoc && userDoc.blockedUsers.includes(req.user._id)) {
+        console.log(`🚫 Forward failed: User ${req.user._id} is blocked by ${otherUser}`);
+        res.status(403);
+        throw new Error("You are blocked by this user");
+      }
+    }
+  }
+
+  const newMessage = {
+    sender: req.user._id,
+    content: content,
+    chat: chatId,
+    type: type,
+    attachments: attachments || [],
+    isForwarded: isForwarded,
+  };
+
+  console.log("📝 Creating message:", newMessage);
+
+  try {
+    var message = await Message.create(newMessage);
+    console.log("✅ Message created:", message._id);
+
+    message = await message.populate("sender", "name avatar");
+    console.log("📌 Populated sender");
+
+    message = await message.populate("attachments");
+    console.log("📎 Populated attachments");
+
+    message = await message.populate("chat");
+    console.log("💬 Populated chat");
+
+    message = await User.populate(message, {
+      path: "chat.users",
+      select: "name avatar email",
+    });
+    console.log("👥 Populated chat users info");
+
+    console.log("🆙 Updating chat lastMessage");
+    await Chat.findByIdAndUpdate(chatId, { lastMessage: message });
+
+    console.log("🎉 Forward message complete");
+    res.json(message);
+
+  } catch (error) {
+    console.error("🔥 ERROR in forwardMessage:", error.message);
+    res.status(400);
+    throw new Error(error.message);
+  }
+});
+
+
+export const pinMessage = asyncHandler(async (req, res) => {
+  const { messageId, chatId } = req.body;
+  const userId = req.user._id;
+
+  if (!messageId || !chatId) {
+    res.status(400);
+    throw new Error("Message ID and Chat ID are required");
+  }
+
+  const message = await Message.findById(messageId);
+  if (!message) {
+    res.status(404);
+    throw new Error("Message not found");
+  }
+
+  const chat = await Chat.findById(chatId)
+    .populate({
+      path: "pinnedMessages.message",
+      populate: {
+        path: "sender",
+        select: "name avatar email"
+      }
+    })
+    .populate("pinnedMessages.pinnedBy", "name avatar");
+
+  if (!chat) {
+    res.status(404);
+    throw new Error("Chat not found");
+  }
+
+  // Check if user is part of the chat
+  const isUserInChat = chat.users.some(
+    user => user.toString() === userId.toString()
+  );
+
+  if (!isUserInChat) {
+    res.status(403);
+    throw new Error("You are not authorized to pin messages in this chat");
+  }
+
+  // Check if message is already pinned
+  const alreadyPinned = chat.pinnedMessages.some(
+    pinned => pinned.message && pinned.message._id.toString() === messageId
+  );
+
+  if (alreadyPinned) {
+    res.status(400);
+    throw new Error("Message is already pinned");
+  }
+
+  // WhatsApp allows up to 3 pinned messages
+  if (chat.pinnedMessages.length >= 3) {
+    res.status(400);
+    throw new Error("Maximum 3 messages can be pinned. Please unpin a message first.");
+  }
+
+  // Add to pinned messages
+  chat.pinnedMessages.push({
+    message: messageId,
+    pinnedBy: userId,
+    pinnedAt: new Date()
+  });
+
+  await chat.save();
+
+  // Populate the newly added pinned message
+  await chat.populate({
+    path: "pinnedMessages.message",
+    populate: {
+      path: "sender",
+      select: "name avatar email"
+    }
+  });
+  await chat.populate("pinnedMessages.pinnedBy", "name avatar");
+
+  res.json({
+    message: "Message pinned successfully",
+    pinnedMessages: chat.pinnedMessages
+  });
+});
+
+export const unpinMessage = asyncHandler(async (req, res) => {
+  const { messageId, chatId } = req.body;
+  const userId = req.user._id;
+
+  if (!messageId || !chatId) {
+    res.status(400);
+    throw new Error("Message ID and Chat ID are required");
+  }
+
+  const chat = await Chat.findById(chatId);
+  if (!chat) {
+    res.status(404);
+    throw new Error("Chat not found");
+  }
+
+  // Check if user is part of the chat
+  const isUserInChat = chat.users.some(
+    user => user.toString() === userId.toString()
+  );
+
+  if (!isUserInChat) {
+    res.status(403);
+    throw new Error("You are not authorized to unpin messages in this chat");
+  }
+
+  // Remove from pinned messages
+  chat.pinnedMessages = chat.pinnedMessages.filter(
+    pinned => pinned.message && pinned.message.toString() !== messageId
+  );
+
+  await chat.save();
+
+  // Populate the remaining pinned messages
+  await chat.populate({
+    path: "pinnedMessages.message",
+    populate: {
+      path: "sender",
+      select: "name avatar email"
+    }
+  });
+  await chat.populate("pinnedMessages.pinnedBy", "name avatar");
+
+  res.json({
+    message: "Message unpinned successfully",
+    pinnedMessages: chat.pinnedMessages
+  });
+});
+
+export const getPinnedMessages = asyncHandler(async (req, res) => {
+  const { chatId } = req.params;
+  const userId = req.user._id;
+
+  const chat = await Chat.findById(chatId)
+    .populate({
+      path: "pinnedMessages.message",
+      populate: [
+        {
+          path: "sender",
+          select: "name avatar email"
+        },
+        {
+          path: "attachments"
+        }
+      ]
+    })
+    .populate("pinnedMessages.pinnedBy", "name avatar");
+
+  if (!chat) {
+    res.status(404);
+    throw new Error("Chat not found");
+  }
+
+  // Check if user is part of the chat
+  const isUserInChat = chat.users.some(
+    user => user.toString() === userId.toString()
+  );
+
+  if (!isUserInChat) {
+    res.status(403);
+    throw new Error("You are not authorized to view pinned messages in this chat");
+  }
+
+  res.json(chat.pinnedMessages || []);
+});
+
+// Get media attachments (images, videos) from chats
+export const getMediaAttachments = asyncHandler(async (req, res) => {
+  try {
+    console.log('📸 [getMediaAttachments] Request received');
+    console.log('Query params:', req.query);
+    
+    const { chatIds } = req.query;
+
+    if (!chatIds) {
+      console.log('❌ No chatIds provided');
+      res.status(400);
+      throw new Error("Chat IDs are required");
+    }
+
+    // Parse comma-separated chat IDs
+    const chatIdArray = chatIds.split(',').map(id => id.trim());
+    console.log('📋 Parsed chat IDs:', chatIdArray);
+
+    // Verify user has access to these chats
+    const chats = await Chat.find({
+      _id: { $in: chatIdArray },
+      users: req.user._id
+    });
+
+    console.log(`✅ Found ${chats.length} chats user has access to`);
+
+    if (chats.length === 0) {
+      console.log('⚠️ No accessible chats found, returning empty array');
+      return res.json([]);
+    }
+
+    const verifiedChatIds = chats.map(chat => chat._id);
+    console.log('🔐 Verified chat IDs:', verifiedChatIds);
+
+    // Find all messages with media attachments in these chats
+    const messages = await Message.find({
+      chat: { $in: verifiedChatIds },
+      attachments: { $exists: true, $ne: [] }
+    })
+      .populate({
+        path: 'attachments',
+        match: {
+          mimeType: { $regex: '^(image|video)/', $options: 'i' }
+        }
+      })
+      .populate('sender', 'name email avatar')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    console.log(`📨 Found ${messages.length} messages with attachments`);
+
+    // Extract and flatten attachments
+    const mediaItems = [];
+    messages.forEach(message => {
+      if (message.attachments && message.attachments.length > 0) {
+        message.attachments.forEach(attachment => {
+          // Filter out null attachments (ones that didn't match the populate condition)
+          if (attachment && attachment._id && (attachment.mimeType?.startsWith('image/') || attachment.mimeType?.startsWith('video/'))) {
+            mediaItems.push({
+              _id: attachment._id,
+              url: attachment.fileUrl,
+              fileName: attachment.fileName,
+              mimeType: attachment.mimeType,
+              fileSize: attachment.fileSize,
+              createdAt: message.createdAt,
+              senderName: message.sender?.name || message.sender?.email,
+              chatId: message.chat
+            });
+          }
+        });
+      }
+    });
+
+    console.log(`✨ Returning ${mediaItems.length} media items`);
+    res.json(mediaItems);
+  } catch (error) {
+    res.status(400);
+    throw new Error(error.message);
+  }
+});
+
+// Get link attachments from chats
+export const getLinkAttachments = asyncHandler(async (req, res) => {
+  try {
+    console.log('🔗 [getLinkAttachments] Request received');
+    console.log('Query params:', req.query);
+    
+    const { chatIds } = req.query;
+
+    if (!chatIds) {
+      console.log('❌ No chatIds provided');
+      res.status(400);
+      throw new Error("Chat IDs are required");
+    }
+
+    // Parse comma-separated chat IDs
+    const chatIdArray = chatIds.split(',').map(id => id.trim());
+    console.log('📋 Parsed chat IDs:', chatIdArray);
+
+    // Verify user has access to these chats
+    const chats = await Chat.find({
+      _id: { $in: chatIdArray },
+      users: req.user._id
+    });
+
+    if (chats.length === 0) {
+      return res.json([]);
+    }
+
+    const verifiedChatIds = chats.map(chat => chat._id);
+
+    // URL regex pattern
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+
+    // Find all messages with URLs in content
+    const messages = await Message.find({
+      chat: { $in: verifiedChatIds },
+      content: { $regex: urlRegex }
+    })
+      .populate('sender', 'name email avatar')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Extract URLs from messages
+    const linkItems = [];
+    messages.forEach(message => {
+      const urls = message.content.match(urlRegex);
+      if (urls && urls.length > 0) {
+        urls.forEach(url => {
+          linkItems.push({
+            _id: message._id + '_' + url,
+            url: url,
+            content: message.content,
+            createdAt: message.createdAt,
+            senderName: message.sender?.name || message.sender?.email,
+            chatId: message.chat
+          });
+        });
+      }
+    });
+
+    res.json(linkItems);
+  } catch (error) {
+    res.status(400);
+    throw new Error(error.message);
+  }
+});
+
+// Get document attachments from chats
+export const getDocumentAttachments = asyncHandler(async (req, res) => {
+  try {
+    console.log('📄 [getDocumentAttachments] Request received');
+    console.log('Query params:', req.query);
+    
+    const { chatIds } = req.query;
+
+    if (!chatIds) {
+      console.log('❌ No chatIds provided');
+      res.status(400);
+      throw new Error("Chat IDs are required");
+    }
+
+    // Parse comma-separated chat IDs
+    const chatIdArray = chatIds.split(',').map(id => id.trim());
+    console.log('📋 Parsed chat IDs:', chatIdArray);
+
+    // Verify user has access to these chats
+    const chats = await Chat.find({
+      _id: { $in: chatIdArray },
+      users: req.user._id
+    });
+
+    if (chats.length === 0) {
+      return res.json([]);
+    }
+
+    const verifiedChatIds = chats.map(chat => chat._id);
+
+    // Find all messages with document attachments in these chats
+    const messages = await Message.find({
+      chat: { $in: verifiedChatIds },
+      attachments: { $exists: true, $ne: [] }
+    })
+      .populate({
+        path: 'attachments',
+        match: {
+          mimeType: { 
+            $regex: '^(?!image|video)', 
+            $options: 'i' 
+          }
+        }
+      })
+      .populate('sender', 'name email avatar')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Extract and flatten document attachments
+    const docItems = [];
+    messages.forEach(message => {
+      if (message.attachments && message.attachments.length > 0) {
+        message.attachments.forEach(attachment => {
+          // Filter out null attachments (ones that didn't match the populate condition)
+          if (attachment && attachment._id && 
+              !attachment.mimeType?.startsWith('image/') && 
+              !attachment.mimeType?.startsWith('video/')) {
+            docItems.push({
+              _id: attachment._id,
+              url: attachment.fileUrl,
+              fileName: attachment.fileName,
+              mimeType: attachment.mimeType,
+              fileSize: attachment.fileSize,
+              createdAt: message.createdAt,
+              senderName: message.sender?.name || message.sender?.email,
+              chatId: message.chat
+            });
+          }
+        });
+      }
+    });
+
+    res.json(docItems);
+  } catch (error) {
+    res.status(400);
+    throw new Error(error.message);
+  }
 });
