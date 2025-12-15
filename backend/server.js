@@ -18,8 +18,12 @@ import documentRoutes from "./routes/document.route.js";
 import archiveRoutes from "./routes/archive.routes.js"; 
 import blockRoutes from "./routes/block.routes.js";
 import userProfileRoutes from "./routes/userProfile.routes.js"; 
+import screenshotRoutes from "./routes/screenshot.routes.js";
+import groupRoutes from "./routes/group.route.js";
 import { notFound, errorHandler } from "./middleware/error.middleware.js"; 
 import cors from 'cors';
+import { setSocketIOInstance } from "./services/scheduledMessageCron.js";
+import { initScheduledMessageCron } from "./services/scheduledMessageCron.js";
 
 connectDB();
 const app = express();
@@ -45,6 +49,7 @@ app.use(express.json());
 app.use("/api/user", userRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/chat", chatRoutes);
+app.use("/api/group", groupRoutes);
 app.use("/api/message", messageRoutes);
 app.use("/api/tasks", taskRoutes);
 app.use("/api/sprints", sprintRoutes); 
@@ -55,6 +60,7 @@ app.use("/api/upload", uploadRoutes);
 app.use("/api/archive", archiveRoutes); 
 app.use("/api/block", blockRoutes);
 app.use("/api/users", userProfileRoutes); 
+app.use("/api/screenshot", screenshotRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
@@ -73,6 +79,13 @@ const io = new Server(server, {
     methods: ["GET", "POST"]
   },
 });
+
+// Initialize scheduled message cron job
+// Pass io to cron job
+setSocketIOInstance(io);
+initScheduledMessageCron();
+
+
 
 io.on("connection", (socket) => {
   console.log("Connected to socket.io");
@@ -109,15 +122,23 @@ io.on("connection", (socket) => {
           }
         }
 
+        if (!chat) {
+          console.warn("[SOCKET] new message received with null/undefined chat", newMessageRecieved);
+          return;
+        }
+
+        if (!Object.prototype.hasOwnProperty.call(chat, 'isGroupChat')) {
+          // Defensive: fallback to false if missing
+          chat.isGroupChat = false;
+        }
+
         if (!chat.isGroupChat) {
           const senderId = newMessageRecieved.sender?._id
             ? String(newMessageRecieved.sender._id)
             : String(newMessageRecieved.sender);
-            
           const otherUser = chat.users.find(user => 
             String(user._id) !== senderId
           );
-          
           if (otherUser && otherUser.blockedUsers && 
               otherUser.blockedUsers.includes(senderId)) {
             socket.emit("message blocked", { 
@@ -584,7 +605,29 @@ socket.on("remove reaction", async (data) => {
     }
   });
 
+  //group-socket-events
   socket.on("disconnect", () => {
     console.log("USER DISCONNECTED", socket.id);
   });
+
+  socket.on("join-group", ({ groupId }) => {
+  socket.join(`group_${groupId}`);
+});
+
+socket.on("leave-group", ({ groupId }) => {
+  socket.leave(`group_${groupId}`);
+});
+
+socket.on("member-added", ({ groupId, userId }) => {
+  io.to(`group_${groupId}`).emit("member-added", { userId });
+});
+
+socket.on("member-removed", ({ groupId, userId }) => {
+  io.to(`group_${groupId}`).emit("member-removed", { userId });
+});
+
+socket.on("admin-changed", ({ groupId, newAdminId }) => {
+  io.to(`group_${groupId}`).emit("admin-changed", { newAdminId });
+});
+
 });

@@ -10,8 +10,11 @@ import React, {
 } from "react";
 import { toast } from "react-hot-toast";
 import { createPortal } from 'react-dom';
+
+
 import { useNavigate, useLocation } from 'react-router-dom';
 import { io } from "socket.io-client";
+import { useScreenshotDetection } from '../hooks/useScreenshotDetection';
 import Swal from "sweetalert2";
 import { motion, AnimatePresence } from "framer-motion";
 import chatReqIcon from "../assets/Chat-reuest.png";
@@ -81,6 +84,10 @@ import ForwardMessageModal from "./ForwardMessageModal";
 import PinnedMessagesBar from "./PinnedMessagesBar";
 import DeleteMessageModal from "./DeleteMessageModal";
 import UserProfileModal from "./UserProfileModal";
+import GroupInfoModal from "./GroupInfoModal";
+
+const API_BASE_URL =
+    import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
 
 // Memoized Chat Header Component
 const ChatHeader = React.memo(
@@ -105,6 +112,8 @@ const ChatHeader = React.memo(
     isBlocked,
     isArchived,
     onOpenUserProfile,
+    setShowDeleteChatModal,
+    setChatToDelete,
   }) => {
     const [menuOpen, setMenuOpen] = React.useState(false);
     const menuRef = React.useRef(null);
@@ -122,12 +131,49 @@ const ChatHeader = React.memo(
     const pinnedCount = Object.values(pinnedMessages || {}).filter(
       Boolean
     ).length;
+
+    const [activeGroup, setActiveGroup] = useState(null);
+const [showGroupInfoModal, setShowGroupInfoModal] = useState(false);
+const [currentGroup, setCurrentGroup] = useState(null);
+const [chats, setChats] = useState([]); // your chat/group list
+
+const handleShowGroupInfo = (group) => {
+  // Make sure group exists
+  if (!group) return;
+
+  setCurrentGroup(group);          // Set the group to view
+  setShowGroupInfoModal(true);     // Open modal
+};
+
+
     return (
       <div className={`${effectiveTheme.secondary} relative`}>
         <div className="p-4 flex items-center justify-between">
           <div 
             className="flex items-center space-x-3 flex-1 cursor-pointer hover:bg-white/5 transition-colors rounded-lg -ml-2 pl-2 pr-4 py-1"
-            onClick={() => !selectedContact.isDocument && onOpenUserProfile()}
+            onClick={() => {
+              if (selectedContact.isDocument) return;
+              const isGroup = selectedContact.isGroup || selectedContact.isGroupChat || selectedContact.isgroupchat;
+              let sidebarActiveNav = null;
+              if (typeof window !== 'undefined' && window.activeNavItem) sidebarActiveNav = window.activeNavItem;
+              if (isGroup || sidebarActiveNav === 'groups') {
+                // Use prop if provided, otherwise fallback to local handler
+                if (typeof window !== 'undefined' && window.setShowGroupInfoModal && window.setCurrentGroup) {
+                  window.setCurrentGroup(selectedContact);
+                  window.setShowGroupInfoModal(true);
+                } else if (typeof window !== 'undefined' && window.dispatchEvent) {
+                  // Custom event for parent to handle
+                  window.dispatchEvent(new CustomEvent('open-group-info-modal', { detail: selectedContact }));
+                } else if (typeof setShowGroupInfoModal === 'function' && typeof setCurrentGroup === 'function') {
+                  setCurrentGroup(selectedContact);
+                  setShowGroupInfoModal(true);
+                } else if (typeof handleShowGroupInfo === 'function') {
+                  handleShowGroupInfo(selectedContact);
+                }
+              } else {
+                onOpenUserProfile();
+              }
+            }}
           >
             {isMobileView && (
               <button
@@ -167,17 +213,18 @@ const ChatHeader = React.memo(
               )}
             </div>
 
-            <div>
-              <h2 className={`font-semibold ${effectiveTheme.text}`}>
-                {selectedContact.name}
-              </h2>
-              <p className={`text-sm ${effectiveTheme.textSecondary}`}>
-                {selectedContact.isTyping
-                  ? "typing..."
-                  : selectedContact.isOnline && !selectedContact.isDocument
-                    ? "Online"
-                    : "Offline"}
-              </p>
+        <div>
+              <h2 className={`font-semibold ${effectiveTheme.text}`}>{selectedContact.name}</h2>
+
+
+             <p className={`text-sm ${effectiveTheme.textSecondary}`}>
+               {selectedContact?.isTyping
+                 ? "Typing..."
+                 : selectedContact?.isOnline
+                 ? "Online"
+                 : "Offline"}
+             </p>
+
             </div>
           </div>
 
@@ -222,8 +269,11 @@ const ChatHeader = React.memo(
                 <MoreVertical className={`w-5 h-5 ${effectiveTheme.text}`} />
               </button>
               {menuOpen && (
-                <div className={`absolute right-0 top-10 w-44 ${effectiveTheme.secondary} border ${effectiveTheme.border} rounded shadow-lg z-50`}>
-                  <ul className="divide-y">
+                <div
+                  className={`absolute right-0 top-10 w-44 ${effectiveTheme.secondary} border ${effectiveTheme.border} rounded shadow-lg z-50 overflow-hidden`}
+                  style={effectiveTheme.mode !== 'dark' ? { background: '#fff' } : {}}
+                >
+                  <ul className="divide-y relative z-10">
                     <li>
                       {!isBlocked ? (
                         <button 
@@ -317,7 +367,7 @@ const ChatHeader = React.memo(
                           </button>
                     </li> */}
                         <li>
-                          <button className={`w-full text-left px-4 py-3 flex items-center gap-2 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900`} onClick={()=>{ if(window.confirm('Delete this chat? This will remove the chat for everyone if you are allowed. Continue?')){ onDeleteChat && onDeleteChat(selectedContact); } setMenuOpen(false); }}>
+                          <button className={`w-full text-left px-4 py-3 flex items-center gap-2 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900`} onClick={() => { setShowDeleteChatModal(true); setChatToDelete(selectedContact); setMenuOpen(false); }}>
                             <Trash2 className="w-4 h-4 opacity-90" />
                             <span>Delete Chat</span>
                           </button>
@@ -1036,6 +1086,7 @@ const MessagesArea = ({
   onForwardMessage,
   onEditMessage,
   onHoverDateChange,
+  manualScrollInProgress,
 }) => {
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
@@ -1111,10 +1162,10 @@ const MessagesArea = ({
 
   // ✅ FIX: Only auto-scroll when NEW messages arrive AND user is at bottom
   useEffect(() => {
-    if (shouldAutoScrollRef.current && messagesEndRef.current) {
+    if (shouldAutoScrollRef.current && messagesEndRef.current && !manualScrollInProgress?.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [filteredMessages, isTyping]);
+  }, [filteredMessages, isTyping, manualScrollInProgress]);
 
   // ✅ Always scroll on contact change
   useEffect(() => {
@@ -1172,7 +1223,7 @@ const MessagesArea = ({
       <div
         ref={messagesContainerRef}
         onScroll={handleScroll}
-        className="h-full overflow-y-auto p-4 space-y-4 relative"
+        className="h-full overflow-y-auto p-4 space-y-4 relative messages-container-capture"
         style={{
           scrollbarWidth: 'thin',
           scrollbarColor: effectiveTheme.mode === 'dark' 
@@ -1339,11 +1390,14 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [selectedContact, setSelectedContact] = useState(null);
+  // const [selectedContact, setSelectedContact] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [chatSearchTerm, setChatSearchTerm] = useState("");
   const [contacts, setContacts] = useState([]);
+  const manualScrollInProgressRef = useRef(false);
   const [googleContacts, setGoogleContacts] = useState([]);
+  const [activeGroup, setActiveGroup] = useState(null); // current group for modal
+  const [showGroupInfoModal, setShowGroupInfoModal] = useState(false);
 
   // Clear any stale contacts on mount (helps when user account was deleted and re-created)
   useEffect(() => {
@@ -1374,6 +1428,8 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
   const [showProfile, setShowProfile] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [activeNavItem, setActiveNavItem] = useState(activeSection); // 'chats', 'groups', 'documents', 'community', 'profile', 'settings'
+const [selectedContact, setSelectedContact] = useState(null);
+
 
   // Forward message state
   const [showForwardModal, setShowForwardModal] = useState(false);
@@ -1382,6 +1438,19 @@ const ChattingPage = ({ onLogout, activeSection = "chats" }) => {
   // Delete message state
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [messageToDelete, setMessageToDelete] = useState(null);
+
+  // --- Delete Chat Modal State ---
+const [showDeleteChatModal, setShowDeleteChatModal] = useState(false);
+const [chatToDelete, setChatToDelete] = useState(null);
+
+// Confirm delete chat handler
+const confirmDeleteChat = async () => {
+  if (chatToDelete) {
+    await handleDeleteChat(chatToDelete);
+    setShowDeleteChatModal(false);
+    setChatToDelete(null);
+  }
+};
 
   // User profile modal state
   const [showUserProfileModal, setShowUserProfileModal] = useState(false);
@@ -1536,17 +1605,25 @@ const deleteDocument = async (documentId) => {
 
     toast.success("Document deleted", {
       style: {
-        background: effectiveTheme.toastBg,
-        color: effectiveTheme.toastText,
-        border: effectiveTheme.toastBorder,
+        background: 'linear-gradient(135deg, #8b5cf6 0%, #60a5fa 100%)',
+        color: '#fff',
+        border: '1.5px solid #a78bfa',
+        boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.15)',
+        backdropFilter: 'blur(8px)',
+        fontWeight: 600,
+        letterSpacing: '0.01em',
       },
     });
   } catch (err) {
     toast.error("Delete failed", {
       style: {
-        background: effectiveTheme.toastBg,
-        color: effectiveTheme.toastText,
-        border: effectiveTheme.toastBorder,
+        background: 'linear-gradient(135deg, #f43f5e 0%, #fbbf24 100%)',
+        color: '#fff',
+        border: '1.5px solid #f43f5e',
+        boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.10)',
+        backdropFilter: 'blur(8px)',
+        fontWeight: 600,
+        letterSpacing: '0.01em',
       },
     });
   }
@@ -1645,7 +1722,8 @@ const togglePin = async (docId, isPinnedNow) => {
 
 
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+const [error, setError] = useState(null);
+const [minLoadingComplete, setMinLoadingComplete] = useState(false);
 
   // Ref for chat search container (click-outside functionality)
   const chatSearchRef = useRef(null);
@@ -1654,8 +1732,7 @@ const togglePin = async (docId, isPinnedNow) => {
   const floatingButtonRef = useRef(null);
   const userMenuRef = useRef(null);
   // API Base URL from environment variable
-  const API_BASE_URL =
-    import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+ 
 
   // Load synced Google contacts (if any) and merge into contacts list
   useEffect(() => {
@@ -1692,7 +1769,6 @@ const togglePin = async (docId, isPinnedNow) => {
   const handleDeleteChat = async (contact) => {
     const chatId = contact?.id || contact?._id || selectedContact?.id || selectedContact?._id;
     if (!chatId) return;
-    if (!window.confirm('Are you sure you want to delete this chat? This will remove all messages.')) return;
     try {
       const token = localStorage.getItem('token') || localStorage.getItem('chasmos_auth_token');
       const res = await fetch(`${API_BASE_URL}/api/chat/${chatId}`, {
@@ -2460,22 +2536,10 @@ const togglePin = async (docId, isPinnedNow) => {
       console.log("Merged received chats:", finalReceived);
       console.log("Merged accepted chats:", finalAccepted);
 
-      // ⭐ 5️⃣ FINAL MERGE FOR UI — this fixes your problem ⭐
-      const finalMerged = [
-        ...finalAccepted,
-        ...finalReceived.filter(
-          (r) => !finalAccepted.some((a) => a.email === r.email)
-        ),
-      ];
 
-      console.log("🔥 FINAL MERGED FOR UI:", finalMerged);
-
+      // Only set acceptedChats to accepted, and receivedChats to received
       if (!mounted) return;
-
-      // ⬇️ set ONLY ONE STATE (UI expects one list)
-      setAcceptedChats(finalMerged);
-
-      // (Optional) keep separate list too
+      setAcceptedChats(finalAccepted);
       setReceivedChats(finalReceived);
 
     } catch (err) {
@@ -2584,7 +2648,9 @@ const togglePin = async (docId, isPinnedNow) => {
           return;
         }
 
-        // For existing chats, access or create chat on backend
+        // Always resolve the unique 1-on-1 chat between two users before fetching messages
+        // Never use a user id as a chat id
+        // Always POST to /api/chat with userId to get the chat, then fetch messages using the returned chat._id
         const res = await fetch(`${API_BASE_URL}/api/chat`, {
           method: "POST",
           headers: {
@@ -2600,14 +2666,8 @@ const togglePin = async (docId, isPinnedNow) => {
           return;
         }
 
-        console.debug("handleOpenChat: opening chat", { chat });
-
         const chatObj = await res.json();
-        console.debug("handleOpenChat: chatObj response", { chatObj });
-
-        // Normalize chat id to string so keys match when storing/fetching messages
         const normalizedChatId = String(chatObj._id || chatObj.chatId || chatObj.id);
-        console.debug("handleOpenChat: normalizedChatId", { normalizedChatId });
 
         // Find the other participant for display
         const localUser = JSON.parse(localStorage.getItem('chasmos_user_data') || '{}');
@@ -2625,7 +2685,6 @@ const togglePin = async (docId, isPinnedNow) => {
         };
 
         setSelectedContact(contactForUI);
-        console.debug("handleOpenChat: selectedContact set", { contactForUI });
 
         // Join socket room
         if (socketRef.current && socketRef.current.emit) {
@@ -2634,7 +2693,6 @@ const togglePin = async (docId, isPinnedNow) => {
 
         // Fetch messages for this chat (use normalized id)
         const msgsUrl = `${API_BASE_URL}/api/message/${normalizedChatId}`;
-        console.debug("handleOpenChat: fetching messages", { msgsUrl });
         const msgsRes = await fetch(msgsUrl, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -2643,8 +2701,6 @@ const togglePin = async (docId, isPinnedNow) => {
           console.warn("handleOpenChat: messages fetch failed", { status: msgsRes.status });
         } else {
           const msgs = await msgsRes.json();
-          console.debug("handleOpenChat: raw messages response", { count: msgs.length, msgsSample: msgs.slice(0,3) });
-
           const formatted = msgs.map((m) => ({
             id: m._id,
             type: m.type || "text",
@@ -2655,14 +2711,9 @@ const togglePin = async (docId, isPinnedNow) => {
             attachments: Array.isArray(m.attachments) ? m.attachments : [],
             isSystemMessage: m.type === 'system',
           }));
-
-          console.debug("handleOpenChat: formatted messages", { formattedSample: formatted.slice(0,3) });
-
           const filteredFormatted = filterDuplicateSystemMessages(formatted);
-
           setMessages((prev) => {
             const next = { ...prev, [normalizedChatId]: filteredFormatted };
-            console.debug("handleOpenChat: setMessages updated for chat", { normalizedChatId, newCount: formatted.length });
             try {
               // update recent/contact preview based on last message loaded from DB
               const last = formatted.length ? formatted[formatted.length - 1] : null;
@@ -2686,6 +2737,32 @@ const togglePin = async (docId, isPinnedNow) => {
       }
     })();
   };
+
+  //Group functions
+  const [currentGroup, setCurrentGroup] = useState(null);
+
+const handleOpenGroupInfo = (group) => {
+  if (!group || !group.isGroup) return;
+
+  setCurrentGroup(group);
+  setShowGroupInfoModal(true);
+};
+
+const handleCloseGroupInfo = () => {
+  setShowGroupInfoModal(false);
+  setCurrentGroup(null);
+};
+
+ const handleUpdateGroup = (updatedGroup) => {
+    setChats(prev => prev.map(c => c.id === updatedGroup.id ? updatedGroup : c));
+    setCurrentGroup(updatedGroup);
+  };
+
+// delete group
+const handleDeleteGroup = (groupId) => {
+  setChats(prev => prev.filter(c => c.id !== groupId));
+  handleCloseGroupInfo();
+};
 
   //handle on clicking accept button
   // ✅ Accept Chat Request
@@ -2731,69 +2808,58 @@ const togglePin = async (docId, isPinnedNow) => {
     console.log("🔹 Normalized Accepted Chats:", normalizedChats);
 
     setAcceptedChats(normalizedChats);
-    setFilteredAcceptedChats(normalizedChats); // important
   } catch (err) {
     console.error("Error fetching accepted chats:", err);
     setAcceptedChats([]);
   }
 };
 
-const handleAcceptChat = async (senderEmail) => {
+// Accepts a chat request from a user (the contact is the user who sent the request)
+const handleAcceptChat = async (contact) => {
   try {
     const token = localStorage.getItem("token");
-    if (!token) throw new Error("No token found.");
-
-    const res = await fetch(`${API_BASE_URL}/api/user/request/accept`, {
+    if (!token || !contact || !contact.email) {
+      console.error("Missing token or contact info");
+      return;
+    }
+    await fetch(`${API_BASE_URL}/api/user/request/accept`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ senderEmail }),
+      body: JSON.stringify({ senderEmail: contact.email }),
     });
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message);
-
-    // Remove from received
-    setReceivedChats((prev) =>
-      prev.filter((c) => c.email !== senderEmail)
-    );
-
-    // Add to accepted instantly
-    if (data.acceptedChat) {
-      const normalized = {
-        _id: data.acceptedChat._id || data.acceptedChat.email,
-        email: data.acceptedChat.email,
-        name:
-          data.acceptedChat.name ||
-          data.acceptedChat.email?.split("@")[0] ||
-          "Unknown",
-        avatar:
-          data.acceptedChat.avatar ||
-          "https://icon-library.com/images/anonymous-avatar-icon/anonymous-avatar-icon-25.jpg",
-        message: data.acceptedChat.message || "",
-        date: new Date(),
-      };
-
-      setFilteredAcceptedChats((prev) => [...prev, normalized]);
-      setAcceptedChats((prev) => [...prev, normalized]);
-    }
-
-    console.log("✅ Chat accepted!");
-
-    // sync with backend
-    fetchAcceptedChats();
-  } catch (error) {
-    console.error("❌ Error accepting chat:", error);
+    // ✅ ONLY HERE
+    fetchAcceptedChats && fetchAcceptedChats();   // populate Accepted
+    fetchRequests && fetchRequests();        // remove from Received
+  } catch (err) {
+    console.error("Error accepting chat request:", err);
   }
 };
 
-useEffect(() => {
-  fetchAcceptedChats();
-}, []);
+const handleRejectChat = async (email) => {
+  try {
+    const token = localStorage.getItem("token");
 
+    await fetch(`${API_BASE_URL}/api/user/request/reject`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ senderEmail: email }),
+    });
 
+    // Remove immediately from UI
+    setReceivedChats((prev) =>
+      prev.filter((req) => req.email !== email)
+    );
+  } catch (err) {
+    console.error("Reject failed", err);
+  }
+};
 
   // ✅ Run once when the component mounts (and on mobile view change if needed)
   // useEffect(() => {
@@ -2897,61 +2963,67 @@ useEffect(() => {
       if (!res.ok) throw new Error("Failed to fetch recent chats");
 
       const data = await res.json();
+      console.log("[RecentChats] Server response:", data);
 
-        const localUser = JSON.parse(
-          localStorage.getItem("chasmos_user_data") || "{}"
-        );
-        const loggedInUserId = localUser._id || localUser.id || null;
+      const localUser = JSON.parse(
+        localStorage.getItem("chasmos_user_data") || "{}"
+      );
+      const loggedInUserId = localUser._id || localUser.id || null;
 
-        const formatted = (Array.isArray(data) ? data : [])
-          .map((chat) => {
-            // Backend may already provide an `otherUser` helper; prefer that.
-            const otherUser =
-              chat.otherUser ||
-              (chat.participants &&
-                chat.participants.find(
-                  (p) => String(p._id) !== String(loggedInUserId)
-                )) ||
-              (Array.isArray(chat.participants) ? chat.participants[0] : null);
+      const formatted = (Array.isArray(data) ? data : [])
+        .map((chat) => {
+          // Backend may already provide an `otherUser` helper; prefer that.
+          const otherUser =
+            chat.otherUser ||
+            (chat.participants &&
+              chat.participants.find(
+                (p) => String(p._id) !== String(loggedInUserId)
+              )) ||
+            (Array.isArray(chat.participants) ? chat.participants[0] : null);
 
-            const otherId = otherUser?._id || otherUser?.id || null;
-            
-            // Skip if no other user found or if chatting with yourself
-            if (!otherId || String(otherId) === String(loggedInUserId)) {
-              return null;
-            }
-            
-            const displayName =
-              otherUser?.name || otherUser?.username || otherUser?.email || "Unknown";
+          const otherId = otherUser?._id || otherUser?.id || null;
+          
+          // Skip if no other user found or if chatting with yourself
+          // if (!otherId || String(otherId) === String(loggedInUserId)) {
+          //   return null;
+          // }
+          
+          const displayName =
+            chat.isGroupChat && chat.chatName
+              ? chat.chatName
+              : otherUser?.name || otherUser?.username || otherUser?.email || "Unknown";
 
-            // Backend may send a preview string that includes a paperclip emoji when attachments exist
-            const rawLast = chat.lastMessage || "";
-            const hasAttachmentFromMarker = typeof rawLast === 'string' && /📎/.test(rawLast);
-            const looksLikeAttachmentOnly = rawLast === 'Attachment' || rawLast === 'Attachment' || /\.(png|jpe?g|gif|webp|bmp|mp4|pdf)$/i.test(rawLast);
-            const hasAttachment = Boolean(chat.hasAttachment || hasAttachmentFromMarker || looksLikeAttachmentOnly || (chat.lastMessage && chat.lastMessage.attachments && chat.lastMessage.attachments.length));
-            // If backend returned filename (e.g., "doc.pdf"), use it as attachmentFileName
-            const attachmentFileName = hasAttachment && typeof rawLast === 'string' ? (rawLast.replace(/📎/g, '').trim() || '') : '';
+          // Backend may send a preview string that includes a paperclip emoji when attachments exist
+          const rawLast = chat.lastMessage || "";
+          const hasAttachmentFromMarker = typeof rawLast === 'string' && /📎/.test(rawLast);
+          const looksLikeAttachmentOnly = rawLast === 'Attachment' || rawLast === 'Attachment' || /\.(png|jpe?g|gif|webp|bmp|mp4|pdf)$/i.test(rawLast);
+          const hasAttachment = Boolean(chat.hasAttachment || hasAttachmentFromMarker || looksLikeAttachmentOnly || (chat.lastMessage && chat.lastMessage.attachments && chat.lastMessage.attachments.length));
+          // If backend returned filename (e.g., "doc.pdf"), use it as attachmentFileName
+          const attachmentFileName = hasAttachment && typeof rawLast === 'string' ? (rawLast.replace(/📎/g, '').trim() || '') : '';
 
-            const chatIdValue = chat.chatId || chat._id;
-            
-            return {
-              id: chatIdValue, // Use chatId as the primary ID
-              chatId: chatIdValue,
-              userId: otherId, // Store the other user's ID separately
-              name: displayName,
-              avatar: otherUser?.avatar || otherUser?.pic || null,
-              lastMessage: rawLast || "",
-              timestamp: chat.timestamp || chat.updatedAt,
-              isOnline: otherUser?.isOnline || false,
-              unreadCount:
-                typeof chat.unreadCount === "number"
-                  ? chat.unreadCount
-                  : (chat.unreadCount && chat.unreadCount[loggedInUserId]) || 0,
-              hasAttachment,
-              attachmentFileName,
-            };
-          })
-          .filter(Boolean); // Remove null entries
+          const chatIdValue = chat.chatId || chat._id;
+          
+          return {
+            id: chatIdValue, // Use chatId as the primary ID
+            chatId: chatIdValue,
+            userId: otherId, // Store the other user's ID separately
+            name: displayName,
+            avatar: otherUser?.avatar || otherUser?.pic || null,
+            lastMessage: rawLast || "",
+            timestamp: chat.timestamp || chat.updatedAt,
+            isOnline: otherUser?.isOnline || false,
+            unreadCount:
+              typeof chat.unreadCount === "number"
+                ? chat.unreadCount
+                : (chat.unreadCount && chat.unreadCount[loggedInUserId]) || 0,
+            hasAttachment,
+            attachmentFileName,
+            chatName: chat.chatName || chat.name || null,
+            isGroupChat: chat.isGroupChat === true || chat.isGroupChat === 'true',
+          };
+        })
+        .filter(Boolean); // Remove null entries
+      console.log("[RecentChats] After formatting:", formatted);
 
       // Deduplicate by chatId (keep the most recent one)
       const seen = new Map();
@@ -2962,24 +3034,57 @@ useEffect(() => {
           seen.set(chatIdKey, chat);
         }
       });
-      
       const deduplicated = Array.from(seen.values());
+      console.log("[RecentChats] After deduplication:", deduplicated);
 
       // Filter out archived chats using the chatId
       const filtered = deduplicated.filter(c => {
         const chatIdToCheck = String(c.chatId || '');
         return !archivedChatIdsSet.has(chatIdToCheck);
       });
+      console.log("[RecentChats] After filtering archived:", filtered);
       setRecentChats(filtered);
+      console.log("[RecentChats] State set to:", filtered);
     } catch (err) {
       setError(err.message);
     }
   }, [API_BASE_URL]);
 
-  // Fetch recent chats on mount
-  useEffect(() => {
-    refreshRecentChats();
-  }, [refreshRecentChats]);
+// Fetch recent chats on mount
+// Improved loading logic: hide spinner after both fetch and min time
+useEffect(() => {
+  let mounted = true;
+  setLoading(true);
+  setMinLoadingComplete(false);
+
+  let minLoadingDone = false;
+  let chatsFetched = false;
+
+  // Helper to hide loader if both are done
+  const maybeHideLoader = () => {
+    if (minLoadingDone && chatsFetched && mounted) {
+      setLoading(false);
+    }
+  };
+
+  // Minimum loading timer
+  const minLoadingTimer = setTimeout(() => {
+    minLoadingDone = true;
+    setMinLoadingComplete(true);
+    maybeHideLoader();
+  }, 1000);
+
+  // Fetch recent chats
+  refreshRecentChats().finally(() => {
+    chatsFetched = true;
+    maybeHideLoader();
+  });
+
+  return () => {
+    mounted = false;
+    clearTimeout(minLoadingTimer);
+  };
+}, [refreshRecentChats]);
 
   // Handle responsive design
   useEffect(() => {
@@ -3055,6 +3160,7 @@ useEffect(() => {
   const filteredContacts = useMemo(() => {
     // Start with recentChats as the base
     let filtered = [...recentChats];
+    console.log("[RecentChats] filteredContacts - initial recentChats:", recentChats);
 
     // Apply search term filter
     if (searchTerm.trim()) {
@@ -3062,7 +3168,9 @@ useEffect(() => {
       filtered = filtered.filter(contact => {
         const name = (contact.name || '').toLowerCase();
         const lastMsg = (contact.lastMessage || '').toLowerCase();
-        return name.includes(lowerSearch) || lastMsg.includes(lowerSearch);
+        const match = name.includes(lowerSearch) || lastMsg.includes(lowerSearch);
+        console.log(`[RecentChats] Filtering contact:`, contact, "Match:", match);
+        return match;
       });
     }
 
@@ -3070,21 +3178,33 @@ useEffect(() => {
     switch (activeNavItem) {
       case "chats":
         filtered = filtered.filter(
-          (contact) =>
-            !contact.isGroup && !contact.isDocument && !contact.isCommunity
+          (contact) => {
+            const result = !contact.isGroup && !contact.isDocument && !contact.isCommunity;
+            console.log(`[RecentChats] Nav filter (chats):`, contact, "Result:", result);
+            return result;
+          }
         );
         break;
       case "groups":
-        filtered = filtered.filter((contact) => contact.isGroup);
+        filtered = filtered.filter((contact) => {
+          const result = contact.isGroup;
+          console.log(`[RecentChats] Nav filter (groups):`, contact, "Result:", result);
+          return result;
+        });
         break;
       case "documents":
-        filtered = filtered.filter((contact) => contact.isDocument);
+        filtered = filtered.filter((contact) => {
+          const result = contact.isDocument;
+          console.log(`[RecentChats] Nav filter (documents):`, contact, "Result:", result);
+          return result;
+        });
         break;
       default:
         // Show all for default case
         break;
     }
 
+    console.log("[RecentChats] filteredContacts - final:", filtered);
     return filtered;
   }, [recentChats, searchTerm, activeNavItem]);
 
@@ -3127,7 +3247,11 @@ const handleSendMessageFromInput = useCallback(
   (payload) => {
     if (!payload || !selectedContact) return;
 
+    // If this is a pending chat (opened from accepted request or chat icon), do not use id as chatId until chat is created
     const getChatId = (payload) => {
+      if (selectedContact?.isPendingChat && !selectedContact.chatId) {
+        return null;
+      }
       return (
         payload?.chat?._id ||
         payload?.chat ||
@@ -3207,8 +3331,14 @@ const handleSendMessageFromInput = useCallback(
         })
       );
     };
-    // Case 1: Server message object
+
+    // Case 1: Server message object (already sent from backend)
     if (typeof payload === 'object' && (payload._id || payload.id || payload.createdAt)) {
+      // If this is a scheduled message (isScheduled true), do NOT append to UI immediately
+      if (payload.isScheduled) {
+        // Do not append to UI, wait for backend to emit when sent
+        return;
+      }
       try {
         const chatId = getChatId(payload);
         const formatted = {
@@ -3243,6 +3373,101 @@ const handleSendMessageFromInput = useCallback(
       }
     }
 
+    // Case 1b: Text message payload as object (from MessageInput)
+    if (typeof payload === 'object' && payload.type === 'text') {
+      (async () => {
+        const token = localStorage.getItem('token') || localStorage.getItem('chasmos_auth_token');
+        let chatId = getChatId(payload);
+        let userId = payload.userId;
+
+        const localMessage = {
+          id: Date.now(),
+          type: 'text',
+          content: payload.content,
+          sender: 'me',
+          timestamp: Date.now(),
+          isRead: true,
+        };
+
+        if (!token) {
+          appendMessage(chatId, localMessage);
+          return;
+        }
+
+        // If this is a pending/accepted chat without a chatId, create the chat first
+        if ((selectedContact?.isPendingChat || selectedContact?.isAcceptedRequest) && !chatId && userId) {
+          try {
+            const createChatRes = await fetch(`${API_BASE_URL}/api/chat`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({ userId }),
+            });
+
+            if (createChatRes.ok) {
+              const chatObj = await createChatRes.json();
+              chatId = String(chatObj._id || chatObj.id);
+              setSelectedContact(prev => ({
+                ...prev,
+                chatId: chatId,
+                id: chatId,
+                isPendingChat: false,
+                isAcceptedRequest: false,
+                participants: chatObj.users || chatObj.participants || [],
+              }));
+              console.log("Chat created for pending/accepted chat:", chatId);
+            } else {
+              console.error("Failed to create chat for pending/accepted chat");
+              return;
+            }
+          } catch (err) {
+            console.error("Error creating chat:", err);
+            return;
+          }
+        }
+
+        if (!chatId) {
+          appendMessage(chatId, localMessage);
+          return;
+        }
+
+        try {
+          const res = await fetch(`${API_BASE_URL}/api/message`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ content: payload.content, chatId, userId }),
+          });
+
+          if (!res.ok) throw new Error('Failed to send text message');
+
+          const sent = await res.json();
+
+          const formatted = {
+            id: sent._id || sent.id || Date.now(),
+            type: 'text',
+            content: sent.content || sent.text || payload.content,
+            sender: sent.sender?._id || sent.sender || 'me',
+            timestamp: new Date(sent.createdAt || Date.now()).getTime(),
+            isRead: true,
+          };
+
+          appendMessage(chatId, formatted);
+          if (socketRef.current?.emit) socketRef.current.emit('new message', sent);
+
+          updateRecentChat(chatId, payload.content, false);
+          updateContactPreview(chatId, payload.content, false);
+        } catch (err) {
+          console.error('Error sending text message:', err);
+        }
+      })();
+      return;
+    }
+
     // Case 2: Attachments message
     if (typeof payload === 'object' && payload.attachments) {
       (async () => {
@@ -3268,8 +3493,8 @@ const handleSendMessageFromInput = useCallback(
           return;
         }
 
-        // If this is an accepted request without a chat, create the chat first
-        if (selectedContact?.isAcceptedRequest && !chatId) {
+        // If this is a pending chat (opened from accepted request or chat icon), create the chat first
+        if (selectedContact?.isPendingChat && !chatId) {
           try {
             const userId = selectedContact.userId || selectedContact._id || selectedContact.email;
             const createChatRes = await fetch(`${API_BASE_URL}/api/chat`, {
@@ -3284,19 +3509,17 @@ const handleSendMessageFromInput = useCallback(
             if (createChatRes.ok) {
               const chatObj = await createChatRes.json();
               chatId = String(chatObj._id || chatObj.id);
-              
-              // Update the selected contact with the new chat ID
+              // Update the selected contact with the new chat ID and clear pending flag
               setSelectedContact(prev => ({
                 ...prev,
                 chatId: chatId,
                 id: chatId,
-                isAcceptedRequest: false,
+                isPendingChat: false,
                 participants: chatObj.users || chatObj.participants || [],
               }));
-
-              console.log("Chat created for accepted request:", chatId);
+              console.log("Chat created for pending chat:", chatId);
             } else {
-              console.error("Failed to create chat for accepted request");
+              console.error("Failed to create chat for pending chat");
               return;
             }
           } catch (err) {
@@ -3501,7 +3724,8 @@ const handleSendMessageFromInput = useCallback(
               type: inferredType,
               content: newMessage.content || newMessage.text || '',
               sender: newMessage.sender?._id || newMessage.sender,
-              timestamp: new Date(newMessage.createdAt || Date.now()).getTime(),
+              // Use scheduledFor as timestamp if present (for scheduled messages)
+              timestamp: newMessage.scheduledFor ? new Date(newMessage.scheduledFor).getTime() : new Date(newMessage.createdAt || Date.now()).getTime(),
               isRead: false,
               attachments: attachments,
               isSystemMessage: newMessage.type === 'system',
@@ -3705,6 +3929,169 @@ const handleSendMessageFromInput = useCallback(
     await handlePinMessage(messageId);
   }, [handlePinMessage]);
 
+  // Screenshot detection handler
+  const handleScreenshotDetected = useCallback(async ({ blob, dimensions, timestamp }) => {
+    console.log('🖼️ [Screenshot] Detection triggered', { 
+      blobSize: blob?.size, 
+      dimensions, 
+      timestamp,
+      selectedContact: selectedContact?.name 
+    });
+
+    if (!selectedContact) {
+      console.error('❌ [Screenshot] No selected contact');
+      toast.error('No active chat to save screenshot', {
+        style: {
+          background: 'linear-gradient(135deg, #f43f5e 0%, #fbbf24 100%)',
+          color: '#fff',
+          border: '1.5px solid #f43f5e',
+          boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.10)',
+          backdropFilter: 'blur(8px)',
+          fontWeight: 600,
+          letterSpacing: '0.01em',
+        },
+        position: 'bottom-center',
+      });
+      return;
+    }
+
+    const chatId = selectedContact.chatId || selectedContact._id || selectedContact.id;
+    console.log('📤 [Screenshot] Uploading for chat:', chatId);
+    
+    // Show loading toast
+    const loadingToast = toast.loading('Screenshot detected!', {
+      position: 'bottom-center',
+      style: {
+        background: 'linear-gradient(135deg, #6366f1 0%, #a78bfa 100%)',
+        color: '#fff',
+        border: '1.5px solid #6366f1',
+        boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.10)',
+        backdropFilter: 'blur(8px)',
+        fontWeight: 600,
+        letterSpacing: '0.01em',
+      },
+    });
+    
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('chasmos_auth_token');
+      if (!token) {
+        console.error('❌ [Screenshot] No token found');
+        toast.error('Authentication required', {
+          id: loadingToast,
+          style: {
+            background: 'linear-gradient(135deg, #f43f5e 0%, #fbbf24 100%)',
+            color: '#fff',
+            border: '1.5px solid #f43f5e',
+            boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.10)',
+            backdropFilter: 'blur(8px)',
+            fontWeight: 600,
+            letterSpacing: '0.01em',
+          },
+        });
+        return;
+      }
+
+      // Create form data
+      const formData = new FormData();
+      const filename = `screenshot_${Date.now()}.png`;
+      formData.append('screenshot', blob, filename);
+      formData.append('chatId', chatId);
+      formData.append('width', dimensions.width.toString());
+      formData.append('height', dimensions.height.toString());
+
+      console.log('📡 [Screenshot] Sending to:', `${API_BASE_URL}/api/screenshot/upload`);
+      console.log('📦 [Screenshot] FormData contents:', {
+        filename,
+        chatId,
+        blobSize: blob.size,
+        width: dimensions.width,
+        height: dimensions.height
+      });
+
+      // Upload screenshot
+      const response = await fetch(`${API_BASE_URL}/api/screenshot/upload`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          // Don't set Content-Type - let browser set it with boundary for FormData
+        },
+        body: formData,
+      });
+
+      console.log('📨 [Screenshot] Response status:', response.status);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ [Screenshot] Upload failed:', response.status, errorText);
+        throw new Error(`Failed to upload screenshot: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('✅ [Screenshot] Uploaded successfully:', data);
+      
+      // Success toast
+      toast.success('Screenshot saved!', {
+        id: loadingToast,
+        duration: 3000,
+        position: 'bottom-center',
+        style: {
+          background: 'linear-gradient(135deg, #8b5cf6 0%, #60a5fa 100%)',
+          color: '#fff',
+          border: '1.5px solid #a78bfa',
+          boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.15)',
+          backdropFilter: 'blur(8px)',
+          fontWeight: 600,
+          letterSpacing: '0.01em',
+        },
+      });
+      
+      // Add system message to chat
+      if (data.systemMessage) {
+        const formatted = {
+          id: data.systemMessage._id || data.systemMessage.id,
+          type: 'system',
+          content: data.systemMessage.content,
+          sender: data.systemMessage.sender._id || data.systemMessage.sender,
+          timestamp: new Date(data.systemMessage.createdAt).getTime(),
+          isSystemMessage: true,
+        };
+
+        setMessages((prev) => ({
+          ...prev,
+          [chatId]: [...(prev[chatId] || []), formatted],
+        }));
+
+        // Emit socket event
+        if (socketRef.current?.emit) {
+          socketRef.current.emit('new message', data.systemMessage);
+        }
+      }
+
+    } catch (error) {
+      console.error('💥 [Screenshot] Error:', error);
+      toast.error(`Failed to save screenshot: ${error.message}`, {
+        position: 'bottom-center',
+        style: {
+          background: 'linear-gradient(135deg, #f43f5e 0%, #fbbf24 100%)',
+          color: '#fff',
+          border: '1.5px solid #f43f5e',
+          boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.10)',
+          backdropFilter: 'blur(8px)',
+          fontWeight: 600,
+          letterSpacing: '0.01em',
+        },
+      });
+    }
+  }, [selectedContact, API_BASE_URL, setMessages, socketRef]);
+
+  // Use screenshot detection hook
+  useScreenshotDetection({
+    chatId: selectedContact?.chatId || selectedContact?._id || selectedContact?.id,
+    userId: currentUserId,
+    onScreenshotDetected: handleScreenshotDetected,
+    enabled: !!selectedContact && !selectedContact.isDocument,
+  });
+
   const handleReplaceOldestPin = useCallback(async () => {
     const chatId = selectedContact?.chatId || selectedContact?._id;
     if (!chatId || !pendingPinMessageId) return;
@@ -3805,19 +4192,65 @@ const handleSendMessageFromInput = useCallback(
       return;
     }
     
-    const messageElement = document.getElementById(`message-${messageId}`);
+    console.log('Navigating to message:', messageId);
     
-    if (messageElement) {
-      messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Disable auto-scroll during manual navigation
+    manualScrollInProgressRef.current = true;
+    
+    const scrollToMessage = (attempts = 0) => {
+      const messageElement = document.getElementById(`message-${messageId}`);
       
-      // Highlight the message briefly
-      messageElement.classList.add('highlight-message');
-      setTimeout(() => {
-        messageElement.classList.remove('highlight-message');
-      }, 2000);
-    } else {
-      console.warn(`Message element not found for ID: ${messageId}`);
-    }
+      if (messageElement) {
+        console.log('Found message element, scrolling...');
+        
+        // Get the messages container
+        const messagesContainer = messageElement.closest('.overflow-y-auto');
+        
+        if (messagesContainer) {
+          // Calculate the offset from the top of the container
+          const containerRect = messagesContainer.getBoundingClientRect();
+          const messageRect = messageElement.getBoundingClientRect();
+          const scrollTop = messagesContainer.scrollTop;
+          const offsetTop = messageRect.top - containerRect.top + scrollTop;
+          
+          // Account for header and pinned messages bar (approximately 150px)
+          const targetScroll = offsetTop - 150;
+          
+          messagesContainer.scrollTo({
+            top: targetScroll,
+            behavior: 'smooth'
+          });
+        } else {
+          // Fallback to scrollIntoView
+          messageElement.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center',
+            inline: 'nearest'
+          });
+        }
+        
+        // Highlight the message briefly
+        messageElement.classList.add('highlight-message');
+        setTimeout(() => {
+          messageElement.classList.remove('highlight-message');
+        }, 2000);
+        
+        // Re-enable auto-scroll after navigation completes (after smooth scroll animation)
+        setTimeout(() => {
+          manualScrollInProgressRef.current = false;
+        }, 1000);
+      } else if (attempts < 5) {
+        console.log(`Message element not found yet, retrying... (attempt ${attempts + 1})`);
+        // Retry after a short delay to allow DOM to update
+        setTimeout(() => scrollToMessage(attempts + 1), 200);
+      } else {
+        console.warn(`Message element not found for ID after ${attempts} attempts: ${messageId}`);
+        // Re-enable auto-scroll even if we fail to find the message
+        manualScrollInProgressRef.current = false;
+      }
+    };
+    
+    scrollToMessage();
   }, []);
 
   // Time-based cosmic overlay system
@@ -3900,13 +4333,16 @@ const handleSendMessageFromInput = useCallback(
     setShowFloatingMenu(false);
   }, []);
 
-   const handleCreateGroup = useCallback(() => {
+
+
+const handleCreateGroup = useCallback(() => {
       setShowGroupCreation(true);
       setShowFloatingMenu(false);
       if (isMobileView) {
         setShowSidebar(false);
       }
     }, [isMobileView]);
+
 
   const handleNewChat = useCallback(() => {
     setShowNewChat(true);
@@ -3930,24 +4366,71 @@ const handleSendMessageFromInput = useCallback(
   }, []);
 
   const handleCreateGroupComplete = useCallback((newGroup) => {
-    // Add the new group to contacts
-    setContacts((prev) => [newGroup, ...prev]);
-    setShowGroupCreation(false);
-    // Optionally select the new group
-    setSelectedContact(newGroup);
-  }, []);
+
+  // Normalize group object so UI detects it is a group
+  const formatted = {
+    ...newGroup,
+    isGroup: true,
+    chatId: newGroup.chat?._id || newGroup.chat,  // ensure chat id is present
+    participants: newGroup.participants || [],
+  };
+
+  setContacts((prev) => [formatted, ...prev]);
+  setShowGroupCreation(false);
+
+  // Auto-select the new group
+  setSelectedContact(formatted);
+
+}, []);
+
 
   const handleStartNewChat = useCallback(
-    (contact) => {
+    async (contact) => {
       setSelectedContact(contact);
       setShowNewChat(false);
 
-      // Initialize messages array if it doesn't exist
-      if (!messages[contact.id]) {
-        setMessages((prev) => ({
-          ...prev,
-          [contact.id]: [],
-        }));
+      // If contact has a chatId or id (existing chat), fetch messages
+      const chatId = contact.chatId || contact.id;
+      if (chatId && String(chatId).length === 24) {
+        // Only fetch if not already loaded
+        if (!messages[chatId] || messages[chatId].length === 0) {
+          try {
+            const token = localStorage.getItem('token') || localStorage.getItem('chasmos_auth_token');
+            if (token) {
+              const msgsUrl = `${API_BASE_URL}/api/message/${chatId}`;
+              const msgsRes = await fetch(msgsUrl, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              if (msgsRes.ok) {
+                const msgs = await msgsRes.json();
+                const formatted = msgs.map((m) => ({
+                  id: m._id,
+                  type: m.type || 'text',
+                  content: m.content || m.text || '',
+                  sender: m.sender?._id || m.sender || 'unknown',
+                  timestamp: new Date(m.createdAt || m.timestamp || Date.now()).getTime(),
+                  isRead: m.isRead || false,
+                  attachments: Array.isArray(m.attachments) ? m.attachments : [],
+                  isSystemMessage: m.type === 'system',
+                }));
+                const filtered = filterDuplicateSystemMessages(formatted);
+                setMessages((prev) => ({ ...prev, [chatId]: filtered }));
+              } else {
+                setMessages((prev) => ({ ...prev, [chatId]: [] }));
+              }
+            }
+          } catch (err) {
+            setMessages((prev) => ({ ...prev, [chatId]: [] }));
+          }
+        }
+      } else {
+        // For new/pending chats, just initialize empty messages
+        if (!messages[contact.id]) {
+          setMessages((prev) => ({
+            ...prev,
+            [contact.id]: [],
+          }));
+        }
       }
     },
     [messages]
@@ -3959,43 +4442,43 @@ const handleSendMessageFromInput = useCallback(
 
   const [documentChats, setDocumentChats] = useState([]);
   // Filter accepted chats to exclude users already present in recentChats
+  // Only show chats that the user has sent and have been accepted (not received requests, not merged)
   const filteredAcceptedChats = React.useMemo(() => {
-  if (!Array.isArray(acceptedChats) || acceptedChats.length === 0) return [];
-  if (!Array.isArray(recentChats) || recentChats.length === 0) return acceptedChats;
+    if (!Array.isArray(acceptedChats) || acceptedChats.length === 0) return [];
+    if (!Array.isArray(recentChats) || recentChats.length === 0) return acceptedChats;
 
-  // Create sets for both emails and IDs for comprehensive filtering
-  const recentEmails = new Set(
-    recentChats
-      .map((r) => r.email || r.otherUser?.email)
-      .filter(Boolean)
-      .map((email) => email.toLowerCase())
-  );
+    // Create sets for both emails and IDs for comprehensive filtering
+    const recentEmails = new Set(
+      recentChats
+        .map((r) => r.email || r.otherUser?.email)
+        .filter(Boolean)
+        .map((email) => email.toLowerCase())
+    );
 
-  const recentChatIds = new Set(
-    recentChats
-      .map((r) => r.id || r._id || r.chatId)
-      .filter(Boolean)
-      .map((id) => String(id))
-  );
+    const recentChatIds = new Set(
+      recentChats
+        .map((r) => r.id || r._id || r.chatId)
+        .filter(Boolean)
+        .map((id) => String(id))
+    );
 
-  const recentUserIds = new Set(
-    recentChats
-      .map((r) => r.userId || r.otherUser?._id)
-      .filter(Boolean)
-      .map((id) => String(id))
-  );
+    const recentUserIds = new Set(
+      recentChats
+        .map((r) => r.userId || r.otherUser?._id)
+        .filter(Boolean)
+        .map((id) => String(id))
+    );
 
-  return acceptedChats.filter((a) => {
-    const email = (a.email || "").toLowerCase();
-    const chatId = String(a.id || a._id || a.chatId || "");
-    const userId = String(a.userId || a._id || "");
-    
-    // Filter out if email, chatId, or userId matches any in recent chats
-    return !recentEmails.has(email) && 
-           !recentChatIds.has(chatId) && 
-           !recentUserIds.has(userId);
-  });
-}, [acceptedChats, recentChats]);
+    // Only show acceptedChats (not received), and not in recent chats
+    return acceptedChats.filter((a) => {
+      const email = (a.email || "").toLowerCase();
+      const chatId = String(a.id || a._id || a.chatId || "");
+      const userId = String(a.userId || a._id || "");
+      return !recentEmails.has(email) && 
+             !recentChatIds.has(chatId) && 
+             !recentUserIds.has(userId);
+    });
+  }, [acceptedChats, recentChats]);
 
   const [isExpanded, setIsExpanded] = useState(true);
 
@@ -4040,24 +4523,7 @@ const handleSendMessageFromInput = useCallback(
 
     fetchDocumentHistory();
   }, []);
-
-  // 🔹 Message input state
-  const [messageInput, setMessageInput] = useState("");
-
-  // 🔹 Function to send message (triggered by Enter key or Send button)
-  const handleSendClick = useCallback(() => {
-    if (!messageInput.trim() || !selectedDocument) return;
-
-    // Here, send the message to your backend or append to chat array
-    console.log(
-      `📩 Sending message: "${messageInput}" for document:`,
-      selectedDocument
-    );
-
-    // Clear input after sending
-    setMessageInput("");
-  }, [messageInput, selectedDocument]);
-
+  
   // Fetch recent chats
   useEffect(() => {
     const fetchRecentChats = async () => {
@@ -4080,26 +4546,30 @@ const handleSendMessageFromInput = useCallback(
 
         const formatted = (Array.isArray(data) ? data : [])
           .map((chat) => {
-            const otherUser =
-              chat.otherUser ||
-              (chat.participants &&
-                chat.participants.find(
-                  (p) => String(p._id) !== String(loggedInUserId)
-                )) ||
-              (Array.isArray(chat.participants) ? chat.participants[0] : null);
+            const participants = chat.participants || [];
+            // Prefer chat.otherUser if present and not self, else find first non-self participant
+            let otherUser = null;
+            if (chat.otherUser) {
+              otherUser = chat.otherUser;
+            } else {
+              otherUser = participants.find((p) => String(p._id || p.id) !== String(loggedInUserId));
+            }
 
-            const otherId = otherUser?._id || otherUser?.id || null;
-            
-            // Skip if no other user found or if chatting with yourself
-            if (!otherId || String(otherId) === String(loggedInUserId)) {
+            // Only skip if all participants are the current user (true self-chat)
+            const allAreSelf =
+              participants.length > 0 &&
+              participants.every((p) => String(p._id || p.id) === String(loggedInUserId));
+            if (allAreSelf) {
               return null;
             }
-            
+
             const displayName =
-              otherUser?.name ||
-              otherUser?.username ||
-              (otherUser?.email ? otherUser.email.split("@")[0] : null) ||
-              "Unknown";
+              chat.isGroupChat && chat.chatName
+                ? chat.chatName
+                : otherUser?.username ||
+                  otherUser?.name ||
+                  (otherUser?.email ? otherUser.email.split("@")[0] : null) ||
+                  "Unknown";
 
             // Determine if lastMessage indicates attachments and extract preview text
             let preview = "";
@@ -4141,6 +4611,7 @@ const handleSendMessageFromInput = useCallback(
               attachmentMime,
               timestamp: chat.timestamp || chat.updatedAt,
               isOnline: otherUser?.isOnline || false,
+              isGroupChat: chat.isGroupChat === true || chat.isGroupChat === 'true',
               unreadCount:
                 typeof chat.unreadCount === "number"
                   ? chat.unreadCount
@@ -4148,7 +4619,7 @@ const handleSendMessageFromInput = useCallback(
             };
           })
           .filter(Boolean); // Remove null entries
-
+          console.log("Fetched recent chats:", formatted);
         // Deduplicate by chatId (keep the most recent one)
         const seen = new Map();
         formatted.forEach(chat => {
@@ -4304,6 +4775,31 @@ useEffect(() => {
 
   return (
     <>
+      {showDeleteChatModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl p-8 max-w-sm w-full relative border border-gray-200 dark:border-gray-700">
+            <h2 className="text-xl font-bold mb-4 text-gray-900 dark:text-white flex items-center gap-2">
+              <Trash2 className="w-6 h-6 text-red-500" />
+              Delete Chat
+            </h2>
+            <p className="mb-6 text-gray-700 dark:text-gray-300">Are you sure you want to delete this chat? This will remove the chat for everyone if you are allowed. This action cannot be undone.</p>
+            <div className="flex gap-3 justify-end">
+              <button
+                className="px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 font-semibold hover:bg-gray-300 dark:hover:bg-gray-600 transition"
+                onClick={() => { setShowDeleteChatModal(false); setChatToDelete(null); }}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 transition"
+                onClick={confirmDeleteChat}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <style>
         {`
           @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700&family=Exo+2:wght@400;500;600;700&display=swap');
@@ -4613,7 +5109,7 @@ useEffect(() => {
           </div>
         )}
 
-        {/* Vertical Navigation Bar */}
+       {/* Vertical Navigation Bar */}
         <div
           className={`w-16 z-50 ${effectiveTheme.secondary} border-r ${effectiveTheme.border} flex flex-col justify-between py-4`}
           style={{ borderRightWidth: "1px" }}
@@ -4627,8 +5123,12 @@ useEffect(() => {
               onClick={() => navigate('/chats')}
               className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-200 ${
                 activeNavItem === "chats"
-                  ? `${effectiveTheme.accent} text-white shadow-lg`
-                  : `${effectiveTheme.hover} ${effectiveTheme.textSecondary} hover:${effectiveTheme.text}`
+                  ? effectiveTheme.mode === 'dark'
+                    ? 'bg-blue-600 text-white shadow-lg'
+                    : 'bg-blue-500 text-white shadow-lg'
+                  : effectiveTheme.mode === 'dark'
+                    ? 'hover:bg-gray-700 text-gray-400 hover:text-gray-200'
+                    : 'hover:bg-gray-100 text-gray-600 hover:text-gray-900'
               }`}
               title="Chats"
             >
@@ -4642,8 +5142,12 @@ useEffect(() => {
               onClick={() => navigate('/groups')}
               className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-200 ${
                 activeNavItem === "groups"
-                  ? `${effectiveTheme.accent} text-white shadow-lg`
-                  : `${effectiveTheme.hover} ${effectiveTheme.textSecondary} hover:${effectiveTheme.text}`
+                  ? effectiveTheme.mode === 'dark'
+                    ? 'bg-blue-600 text-white shadow-lg'
+                    : 'bg-blue-500 text-white shadow-lg'
+                  : effectiveTheme.mode === 'dark'
+                    ? 'hover:bg-gray-700 text-gray-400 hover:text-gray-200'
+                    : 'hover:bg-gray-100 text-gray-600 hover:text-gray-900'
               }`}
               title="Groups"
             >
@@ -4657,8 +5161,12 @@ useEffect(() => {
               onClick={() => navigate('/documents')}
               className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-200 ${
                 activeNavItem === "documents"
-                  ? `${effectiveTheme.accent} text-white shadow-lg`
-                  : `${effectiveTheme.hover} ${effectiveTheme.textSecondary} hover:${effectiveTheme.text}`
+                  ? effectiveTheme.mode === 'dark'
+                    ? 'bg-blue-600 text-white shadow-lg'
+                    : 'bg-blue-500 text-white shadow-lg'
+                  : effectiveTheme.mode === 'dark'
+                    ? 'hover:bg-gray-700 text-gray-400 hover:text-gray-200'
+                    : 'hover:bg-gray-100 text-gray-600 hover:text-gray-900'
               }`}
               title="Documents"
             >
@@ -4675,8 +5183,12 @@ useEffect(() => {
               onClick={() => navigate('/profile')}
               className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-200 ${
                 activeNavItem === "profile"
-                  ? `${effectiveTheme.accent} text-white shadow-lg`
-                  : `${effectiveTheme.hover} ${effectiveTheme.textSecondary} hover:${effectiveTheme.text}`
+                  ? effectiveTheme.mode === 'dark'
+                    ? 'bg-blue-600 text-white shadow-lg'
+                    : 'bg-blue-500 text-white shadow-lg'
+                  : effectiveTheme.mode === 'dark'
+                    ? 'hover:bg-gray-700 text-gray-400 hover:text-gray-200'
+                    : 'hover:bg-gray-100 text-gray-600 hover:text-gray-900'
               }`}
               title="Profile"
             >
@@ -4690,8 +5202,12 @@ useEffect(() => {
               onClick={() => navigate('/settings')}
               className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-200 ${
                 activeNavItem === "settings"
-                  ? `${effectiveTheme.accent} text-white shadow-lg`
-                  : `${effectiveTheme.hover} ${effectiveTheme.textSecondary} hover:${effectiveTheme.text}`
+                  ? effectiveTheme.mode === 'dark'
+                    ? 'bg-blue-600 text-white shadow-lg'
+                    : 'bg-blue-500 text-white shadow-lg'
+                  : effectiveTheme.mode === 'dark'
+                    ? 'hover:bg-gray-700 text-gray-400 hover:text-gray-200'
+                    : 'hover:bg-gray-100 text-gray-600 hover:text-gray-900'
               }`}
               title="Settings"
             >
@@ -4703,7 +5219,11 @@ useEffect(() => {
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.95 }}
               onClick={onLogout}
-              className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-200 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-500 hover:text-red-600`}
+              className={`w-10 h-10 rounded-lg flex items-center justify-center transition-all duration-200 ${
+                effectiveTheme.mode === 'dark'
+                  ? 'hover:bg-red-900/30 text-red-400 hover:text-red-300'
+                  : 'hover:bg-red-50 text-red-500 hover:text-red-600'
+              }`}
               title="Logout"
             >
               <LogOut className="w-5 h-5" />
@@ -4805,7 +5325,12 @@ useEffect(() => {
                               initial={{ opacity: 0, scale: 0.95, y: -10 }}
                               animate={{ opacity: 1, scale: 1, y: 0 }}
                               exit={{ opacity: 0, scale: 0.95, y: -10 }}
-                              className={`absolute right-0 mt-2 w-56 ${effectiveTheme.secondary} border ${effectiveTheme.border} rounded-lg shadow-xl z-50 overflow-hidden`}
+                              className={`absolute right-0 mt-2 w-56 border ${effectiveTheme.border} rounded-lg shadow-xl z-50 overflow-hidden`}
+                              style={
+                                effectiveTheme.mode === 'dark'
+                                  ? { backgroundColor: '#232b36', boxShadow: '0 4px 32px 0 rgba(0,0,0,0.25)', backdropFilter: 'none', WebkitBackdropFilter: 'none' }
+                                  : { backgroundColor: '#fff' }
+                              }
                             >
                               <button
                                 onClick={() => {
@@ -4892,7 +5417,7 @@ useEffect(() => {
                           ? "Search conversations..."
                           : activeNavItem === "documents"
                             ? "Search documents..."
-                            : "Search..."
+                            : "Search groups..."
                       }
                       value={searchTerm}
                       onChange={handleSearchTermChange}
@@ -4980,22 +5505,44 @@ useEffect(() => {
       )}
     </div>
   </div>
+ <div className="flex gap-2">
+  {/* Reject */}
+ <button
+  onClick={() => handleRejectChat(req.email)}
+  className="
+    px-3 py-1 text-xs rounded-md
+    border border-red-500
+    text-red-500
+    hover:bg-red-600/20 hover:text-red-700
+    active:bg-red-500/30
+    transition-colors duration-200
+  "
+>
+  Reject
+</button>
+
+
+  {/* Accept */}
   <button
-    onClick={() => handleAcceptChat(req.email)}
-    className="px-3 py-1 text-xs rounded-md bg-green-600 text-white hover:bg-green-700 transition"
+    onClick={() => handleAcceptChat(req)}
+    className="px-3 py-1 text-xs rounded-md
+      bg-green-600 text-white
+      hover:bg-green-700 transition"
   >
     Accept
   </button>
+</div>
+
 </div>
 
                             ))
                           ) : (
                             <div
                               className={`w-full flex items-center px-4 py-3 rounded-lg ${
-                                effectiveTheme.searchBg
-                                  ? effectiveTheme.searchBg
-                                  : "bg-gray-100 dark:bg-gray-800"
-                              } text-gray-400`}
+                                effectiveTheme.mode === 'dark'
+                                  ? 'bg-[#232e3e] text-gray-400'
+                                  : 'bg-gray-100 text-gray-500'
+                              }`}
                             >
                               No new requests
                             </div>
@@ -5105,10 +5652,10 @@ useEffect(() => {
           ) : (
             <div
               className={`w-full flex items-center justify-center px-4 py-3 rounded-lg ${
-                effectiveTheme.searchBg
-                  ? effectiveTheme.searchBg
-                  : "bg-gray-100 dark:bg-gray-800"
-              } text-gray-400`}
+                effectiveTheme.mode === 'dark'
+                  ? 'bg-[#232e3e] text-gray-400'
+                  : 'bg-gray-100 text-gray-500'
+              }`}
             >
               No new accepted invites yet
             </div>
@@ -5232,7 +5779,7 @@ useEffect(() => {
               {/* 🗂️ NORMAL UNPINNED DOCUMENTS */}
               <div className="space-y-2 mt-4">
                 <h4 className={`text-sm font-semibold ${effectiveTheme.text}`}>
-                  📄 All Documents
+                  All Documents
                 </h4>
 
                 {documentChats
@@ -5319,168 +5866,7 @@ useEffect(() => {
   </div>
 </>
 
-//  <>
-//   <div className="flex-1 overflow-y-auto p-4 space-y-4">
 
-//     {/* Header with dropdown toggle */}
-//     <div
-//       className="flex items-center justify-between cursor-pointer"
-//       onClick={() => setIsExpanded(!isExpanded)}
-//     >
-//       <h4 className="text-gray-900 dark:text-gray-100 font-semibold">
-//         Document History
-//       </h4>
-
-//       {isExpanded ? (
-//         <ChevronUp className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-//       ) : (
-//         <ChevronDown className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-//       )}
-//     </div>
-
-//     {/* Animated Dropdown */}
-//     <AnimatePresence initial={false}>
-//       {isExpanded && (
-//         <motion.div
-//           initial={{ opacity: 0, height: 0 }}
-//           animate={{ opacity: 1, height: "auto" }}
-//           exit={{ opacity: 0, height: 0 }}
-//           transition={{ duration: 0.3 }}
-//           className="space-y-3 overflow-hidden"
-//         >
-//           {loading ? (
-//             <div className="text-gray-600 dark:text-gray-400 text-center py-4">
-//               Loading...
-//             </div>
-//           ) : (
-//             <>
-//               {/* 📌 PINNED DOCUMENTS */}
-//               {pinnedDocs.length > 0 && (
-//                 <div className="space-y-3">
-//                   <h4 className="text-gray-800 dark:text-gray-200 text-sm font-semibold">
-//                     📌 Pinned
-//                   </h4>
-
-//                   {pinnedDocs.map((doc) => (
-//                     <motion.div
-//                       key={doc._id}
-//                       whileHover={{ scale: 1.02 }}
-//                       whileTap={{ scale: 0.97 }}
-//                       onClick={() => {
-//                         if (!selectedDocument || selectedDocument._id !== doc._id) {
-//                           setSelectedDocument(doc);
-//                           setIsNewDocumentChat(false);
-//                         }
-//                       }}
-//                       className={`p-3 rounded-lg cursor-pointer transition-all duration-200 
-//                         ${effectiveTheme.secondary} border ${effectiveTheme.border} hover:${effectiveTheme.hover}
-//                         flex justify-between items-center`}
-//                     >
-//                       {/* Text */}
-//                       <div className="flex flex-col">
-//                         <p className="font-medium truncate text-gray-900 dark:text-gray-200">
-//                           {doc.fileName || "Untitled Document"}
-//                         </p>
-//                         <p className="text-xs text-gray-600 dark:text-gray-400 truncate mt-0.5">
-//                           {doc.updatedAt
-//                             ? new Date(doc.updatedAt).toLocaleString()
-//                             : "No date"}
-//                         </p>
-//                       </div>
-
-//                       {/* UNPIN button */}
-//                       <button
-//                         onClick={(e) => {
-//                           e.stopPropagation();
-//                           togglePin(doc._id, true);
-//                         }}
-//                         className="p-2"
-//                       >
-//                         <PinOff className="w-5 h-5 text-yellow-500" />
-//                       </button>
-//                     </motion.div>
-//                   ))}
-//                 </div>
-//               )}
-
-//               {/* 🗂️ NORMAL UNPINNED DOCUMENTS */}
-//               <div className="space-y-2 mt-4">
-//                 <h4 className="text-gray-800 dark:text-gray-200 text-sm font-semibold">
-//                   📄 All Documents
-//                 </h4>
-
-//                 {documentChats
-//                   .filter((d) => !d.isPinned)
-//                   .map((doc) => (
-//                     <motion.div
-//                       key={doc._id}
-//                       whileHover={{ scale: 1.02 }}
-//                       whileTap={{ scale: 0.97 }}
-//                       onClick={() => {
-//                         if (!selectedDocument || selectedDocument._id !== doc._id) {
-//                           setSelectedDocument(doc);
-//                           setIsNewDocumentChat(false);
-//                         }
-//                       }}
-//                       className={`p-3 rounded-lg cursor-pointer transition-all duration-200 
-//                         ${effectiveTheme.secondary} border ${effectiveTheme.border} hover:${effectiveTheme.hover}
-//                         flex justify-between items-center`}
-//                     >
-//                       <div className="flex flex-col">
-//                         <p className="font-medium truncate text-gray-900 dark:text-gray-200">
-//                           {doc.fileName || "Untitled Document"}
-//                         </p>
-//                         <p className="text-xs text-gray-600 dark:text-gray-400 truncate mt-0.5">
-//                           {doc.updatedAt
-//                             ? new Date(doc.updatedAt).toLocaleString()
-//                             : "No date available"}
-//                         </p>
-//                       </div>
-
-//                       {/* PIN button */}
-//                       <button
-//                         onClick={(e) => {
-//                           e.stopPropagation();
-//                           togglePin(doc._id, false); // pin
-//                         }}
-//                         className="p-2"
-//                       >
-//                         <Pin className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-//                       </button>
-//                     </motion.div>
-//                   ))}
-//               </div>
-//             </>
-//           )}
-//         </motion.div>
-//       )}
-//     </AnimatePresence>
-
-//     {/* 🆕 Floating New Chat Button */}
-//     <div className="flex justify-center mt-8">
-//       <motion.button
-//         initial={{ opacity: 0, y: 10 }}
-//         animate={{ opacity: 1, y: 0 }}
-//         whileHover={{ scale: 1.05 }}
-//         whileTap={{ scale: 0.95 }}
-//         transition={{ type: "spring", stiffness: 220 }}
-//         onClick={() => {
-//           setSelectedDocument(null);
-//           setIsNewDocumentChat(true);
-//         }}
-//         className={`flex items-center space-x-3 ${effectiveTheme.secondary} px-5 py-3 rounded-xl shadow-lg border ${effectiveTheme.border} hover:${effectiveTheme.hover} transition-all duration-200 group`}
-//       >
-//         <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center shadow-md">
-//           <MessageSquare className="w-5 h-5 text-white" />
-//         </div>
-
-//         <span className="text-gray-900 dark:text-gray-100 font-semibold">
-//           New Chat
-//         </span>
-//       </motion.button>
-//     </div>
-//   </div>
-// </>
 
 
   ) : (
@@ -5510,44 +5896,47 @@ useEffect(() => {
         </>
       ) : (
         <>
-          {/* Recent Chats */}
-          {recentChats.length > 0 && (
-            <div className="flex flex-col gap-2">
-              <h4 className={`font-semibold ${effectiveTheme.mode === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
-                Recent Chats
-              </h4>
-              {recentChats.map((chat) => (
-                <ContactItem
-                  key={chat.id}
-                  contact={chat}
-                  effectiveTheme={effectiveTheme}
-                  onSelect={(c) => handleOpenChat(c)}
-                />
-              ))}
+          {/* Filtered Chats/Groups List */}
+          {loading || (!minLoadingComplete && recentChats.length === 0) ? (
+            <div className="flex flex-col items-center justify-center py-10">
+              <svg className="animate-spin h-8 w-8 text-blue-500 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+              </svg>
+              <span className={effectiveTheme.mode === 'dark' ? 'text-gray-400' : 'text-gray-500'}>Loading chats...</span>
             </div>
-          )}
-
-          {/* All Contacts */}
-          {contacts.length > 0 && (
-            <div className="flex flex-col gap-2 mt-4">
-              <h4 className={`font-semibold ${effectiveTheme.mode === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
-                Contacts
-              </h4>
-              {contacts.map((contact) => (
-                <ContactItem
-                  key={contact.id}
-                  contact={contact}
-                  effectiveTheme={effectiveTheme}
-                  onSelect={(c) => handleOpenChat(c)}
-                />
-              ))}
-            </div>
+          ) : (
+            (() => {
+              let filtered = [];
+              if (activeNavItem === 'chats') {
+                filtered = recentChats.filter(c => c.isGroupChat === false);
+              } else if (activeNavItem === 'groups') {
+                filtered = recentChats.filter(c => c.isGroupChat === true);
+              } else {
+                filtered = recentChats;
+              }
+              return filtered.length > 0 ? (
+                <div className="flex flex-col gap-2">
+                  <h4 className={`font-semibold ${effectiveTheme.mode === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
+                    {activeNavItem === 'groups' ? 'Groups' : 'Recent Chats'}
+                  </h4>
+                  {filtered.map((chat) => (
+                    <ContactItem
+                      key={chat.chatId || chat.id}
+                      contact={chat}
+                      effectiveTheme={effectiveTheme}
+                      onSelect={(c) => handleOpenChat(c)}
+                    />
+                  ))}
+                </div>
+              ) : null;
+            })()
           )}
         </>
       )}
 
-      {/* Empty State */}
-      {!searchTerm.trim() && recentChats.length === 0 && contacts.length === 0 && (
+      {/* Empty State: Only show if loading is false and there are no chats or contacts */}
+      {(!loading && !searchTerm.trim() && recentChats.length === 0 && contacts.length === 0) ? (
         <div className="text-center space-y-4 mt-10">
           <p className={effectiveTheme.mode === 'dark' ? 'text-gray-400' : 'text-gray-500'}>
             Start chatting with Chasmos!
@@ -5556,10 +5945,10 @@ useEffect(() => {
             onClick={() => setShowNewChat(true)}
             className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition"
           >
-            New Chat
+            Start a New Chat
           </button>
         </div>
-      )}
+      ) : null}
     </>
   )}
 </div>
@@ -5600,7 +5989,7 @@ useEffect(() => {
                                               animate={{ opacity: 1, x: 0 }}
                                               transition={{ delay: 0.15 }}
                                               onClick={handleCreateGroup}
-                                              className={`flex items-center space-x-3 ${effectiveTheme.secondary} px-4 py-3 rounded-lg shadow-lg border ${effectiveTheme.border} hover:${effectiveTheme.hover} transition-colors group`}
+                                              className={`flex items-center space-x-3 ${effectiveTheme.mode === 'dark' ? effectiveTheme.secondary : 'bg-white'} px-4 py-3 rounded-lg shadow-lg border ${effectiveTheme.border} hover:${effectiveTheme.hover} transition-colors group`}
                                             >
                                               <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center">
                                                 <Users className="w-5 h-5 text-white" />
@@ -5618,7 +6007,7 @@ useEffect(() => {
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: 0.25 }}
                         onClick={handleNewChat}
-                        className={`flex items-center space-x-3 ${effectiveTheme.secondary} px-4 py-3 rounded-lg shadow-lg border ${effectiveTheme.border} hover:${effectiveTheme.hover} transition-colors group`}
+                        className={`flex items-center space-x-3 ${effectiveTheme.mode === 'dark' ? effectiveTheme.secondary : 'bg-white'} px-4 py-3 rounded-lg shadow-lg border ${effectiveTheme.border} hover:${effectiveTheme.hover} transition-colors group`}
                       >
                         <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
                           <MessageSquare className="w-5 h-5 text-white" />
@@ -5636,7 +6025,7 @@ useEffect(() => {
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: 0.35 }}
                         onClick={handleInviteUser}
-                        className={`flex items-center space-x-3 ${effectiveTheme.secondary} px-4 py-3 rounded-lg shadow-lg border ${effectiveTheme.border} hover:${effectiveTheme.hover} transition-colors group`}
+                        className={`flex items-center space-x-3 ${effectiveTheme.mode === 'dark' ? effectiveTheme.secondary : 'bg-white'} px-4 py-3 rounded-lg shadow-lg border ${effectiveTheme.border} hover:${effectiveTheme.hover} transition-colors group`}
                       >
                         <div className="w-10 h-10 bg-purple-500 rounded-full flex items-center justify-center">
                           <UserPlus className="w-5 h-5 text-white" />
@@ -5889,6 +6278,8 @@ useEffect(() => {
                 onDeleteChat={handleDeleteChat}
                 isBlocked={isBlockedState}
                 isArchived={isArchivedState}
+                setShowDeleteChatModal={setShowDeleteChatModal}
+                setChatToDelete={setChatToDelete}
                 onOpenUserProfile={() => {
                   // For group chats or documents, we can't show a single user profile
                   if (selectedContact.isGroup || selectedContact.isDocument) {
@@ -5925,7 +6316,29 @@ useEffect(() => {
                   }
                 }}
               />
-              
+
+ {showGroupInfoModal && currentGroup && (
+  <>
+    {console.log("Rendering modal for:", currentGroup)}
+{showGroupInfoModal && currentGroup && (
+  <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50">
+    <GroupInfoModal
+      open={showGroupInfoModal}
+      onClose={handleCloseGroupInfo}
+      group={currentGroup}
+      currentUserId={localStorage.getItem("userId")}
+      onUpdateGroup={(updated) => setCurrentGroup(updated)}
+      onDeleteGroup={(groupId) => {
+        console.log("Group deleted:", groupId);
+        setShowGroupInfoModal(false);
+        setCurrentGroup(null);
+      }}
+    />
+  </div>
+)}
+  </>
+)}
+         
               {/* Pinned Messages Bar */}
               <PinnedMessagesBar
                 pinnedMessages={pinnedMessagesData}
@@ -5977,10 +6390,37 @@ useEffect(() => {
                   onDeleteMessage={handleDeleteMessage}
                   onForwardMessage={handleForwardMessage}
                   onEditMessage={handleEditMessage}
+                  manualScrollInProgress={manualScrollInProgressRef}
                 />
               </div>
               <MessageInput
-                    onSendMessage={handleSendMessageFromInput}
+                onSendMessage={(payload) => {
+                  // Helper to get correct chatId and userId for message sending
+                  let chatId = selectedContact?.chatId || selectedContact?._id;
+                  let userId = null;
+                  // For new 1-on-1 chats, pass userId (other participant)
+                  if (!chatId && selectedContact && !selectedContact.isGroup) {
+                    // Prefer userId, then id, then fallback to _id (but not self)
+                    if (selectedContact.userId && selectedContact.userId !== currentUserId) {
+                      userId = selectedContact.userId;
+                    } else if (selectedContact.id && selectedContact.id !== currentUserId) {
+                      userId = selectedContact.id;
+                    } else if (selectedContact._id && selectedContact._id !== currentUserId) {
+                      userId = selectedContact._id;
+                    } else if (selectedContact.participants && Array.isArray(selectedContact.participants)) {
+                      // Fallback: find the participant that is not the current user
+                      const other = selectedContact.participants.find(pid => pid !== currentUserId);
+                      if (other) userId = other;
+                    }
+                  }
+                  // Log for debugging
+                  console.log('[MessageInput->onSendMessage] chatId:', chatId, 'userId:', userId, 'selectedContact:', selectedContact);
+                  handleSendMessageFromInput({
+                    ...payload,
+                    chatId,
+                    userId,
+                  });
+                }}
                 selectedContact={selectedContact}
                 effectiveTheme={effectiveTheme}
               />
