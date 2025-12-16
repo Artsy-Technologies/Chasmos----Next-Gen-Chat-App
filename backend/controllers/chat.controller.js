@@ -6,6 +6,7 @@ import Group from "../models/group.model.js";
 import Attachment from "../models/attachment.model.js";
 import { deleteFileFromSupabase } from "../utils/supabaseHelper.js";
 import path from "path";
+import { getSocketIOInstance } from "../services/scheduledMessageCron.js";
 
 export const accessChat = asyncHandler(async (req, res) => {
   const { userId } = req.body;
@@ -89,7 +90,7 @@ export const fetchChats = asyncHandler(async (req, res) => {
       path: "lastMessage.sender",
       select: "name avatar email",
     });
-    
+    console.log(results);
     res.status(200).send(populatedResults);
   } catch (error) {
     res.status(400);
@@ -98,20 +99,17 @@ export const fetchChats = asyncHandler(async (req, res) => {
 });
 
 export const createGroupChat = asyncHandler(async (req, res) => {
-  const { name, users, description, avatar, isPublic } = req.body;
+  const { name, users, description, isPublic } = req.body;
 
-  if (!users || !name) {
+  if (!name || !users) {
     return res.status(400).json({ message: "Please fill all the fields" });
   }
 
-  // Handle both array or string
-  let parsedUsers = users;
-  if (typeof users === "string") {
-    try {
-      parsedUsers = JSON.parse(users);
-    } catch (err) {
-      return res.status(400).json({ message: "Invalid users format" });
-    }
+  let parsedUsers;
+  try {
+    parsedUsers = JSON.parse(users);
+  } catch {
+    return res.status(400).json({ message: "Invalid users format" });
   }
 
   if (!Array.isArray(parsedUsers) || parsedUsers.length < 2) {
@@ -120,34 +118,72 @@ export const createGroupChat = asyncHandler(async (req, res) => {
     });
   }
 
-  // Add creator to group
-  parsedUsers.push(req.user._id);
+  // ✅ avatar path from multer
+  const avatar = req.file ? `/uploads/${req.file.filename}` : "";
 
-  try {
-    const groupChat = await Chat.create({
-      chatName: name,
-      users: parsedUsers,
-      participants: parsedUsers,
-      isGroupChat: true,
-      groupAdmin: req.user._id,
-      admins: [req.user._id],
-      groupSettings: {
-        description: description || "",
-        avatar: avatar || "",
-        isPublic: isPublic || false,
-      },
-    });
+  console.log("Uploaded file:", req.file);
 
-    const fullGroupChat = await Chat.findById(groupChat._id)
-      .populate("users", "-password")
-      .populate("groupAdmin", "-password")
-      .populate("admins", "name email avatar");
-
-    res.status(200).json(fullGroupChat);
-  } catch (error) {
-    res.status(400);
-    throw new Error(error.message);
+  // ✅ ensure creator is included only once
+  if (!parsedUsers.includes(req.user._id.toString())) {
+    parsedUsers.push(req.user._id);
   }
+
+  const groupChat = await Chat.create({
+    chatName: name,
+    users: parsedUsers,
+    participants: parsedUsers,
+    isGroupChat: true,
+    groupAdmin: req.user._id,
+    admins: [req.user._id],
+    groupSettings: {
+      description: description || "",
+      avatar,
+      isPublic: isPublic === "true",
+    },
+  });
+
+  const fullGroupChat = await Chat.findById(groupChat._id)
+    .populate("users", "-password")
+    .populate("groupAdmin", "-password")
+    .populate("admins", "name email avatar");
+
+  // Emit socket event to participants so other connected users update immediately
+  try {
+    const io = getSocketIOInstance();
+    const participants = Array.isArray(fullGroupChat.participants) && fullGroupChat.participants.length ? fullGroupChat.participants : fullGroupChat.users || [];
+    const payload = {
+      _id: fullGroupChat._id,
+      chatId: fullGroupChat._id,
+      id: fullGroupChat._id,
+      chatName: fullGroupChat.chatName,
+      name: fullGroupChat.chatName,
+      isGroupChat: true,
+      users: fullGroupChat.users,
+      participants,
+      admins: fullGroupChat.admins || [],
+      groupAdmin: fullGroupChat.groupAdmin || null,
+      groupSettings: fullGroupChat.groupSettings || {},
+    };
+
+    console.log("[chat.controller] Emitting group created:", { ioAvailable: !!io, chatId: String(fullGroupChat._id), participantCount: (participants || []).length });
+
+    if (io) {
+      // Emit to chat room
+      try { io.to(String(fullGroupChat._id)).emit("group created", payload); } catch (e) { console.error('emit to chat room failed', e); }
+
+      // Also emit to each participant's personal room so sidebar updates
+      (participants || []).forEach((u) => {
+        const uid = u && (u._id ? u._id.toString() : (typeof u === 'string' ? u : (u.toString && u.toString())));
+        if (uid) {
+          try { io.to(String(uid)).emit("group created", payload); } catch (e) { console.error('emit to user room failed', uid, e); }
+        }
+      });
+    }
+  } catch (e) {
+    console.error("Failed to emit group created socket event:", e);
+  }
+
+  res.status(200).json(fullGroupChat);
 });
 
 
@@ -507,6 +543,25 @@ export const deleteChat = asyncHandler(async (req, res) => {
     await Message.deleteMany({ chat: chatId });
     await Chat.findByIdAndDelete(chatId);
     console.log("Group chat deleted successfully");
+    // Emit socket event to participants so they can remove the chat from UI
+    try {
+      const io = getSocketIOInstance();
+      if (io) {
+        // notify chat room
+        try { io.to(String(chatId)).emit('chat deleted', { chatId: String(chatId) }); } catch (e) { console.error('emit chat deleted to room failed', e); }
+
+        // notify each user individually
+        const participants = chat.participants && chat.participants.length ? chat.participants : chat.users || [];
+        (participants || []).forEach(p => {
+          const uid = p && (p._id ? String(p._id) : (typeof p === 'string' ? p : (p.toString && p.toString())));
+          if (uid) {
+            try { io.to(uid).emit('chat deleted', { chatId: String(chatId) }); } catch (e) { console.error('emit chat deleted to user failed', uid, e); }
+          }
+        });
+      }
+    } catch (e) {
+      console.error('Failed to emit chat deleted event:', e);
+    }
     res.status(200).json({
       message: "Group chat deleted successfully",
       chatId: chatId
@@ -551,6 +606,22 @@ export const deleteChat = asyncHandler(async (req, res) => {
     await Message.deleteMany({ chat: chatId });
     await Chat.findByIdAndDelete(chatId);
     console.log("Chat deleted successfully");
+    // Emit socket event to participants so they can remove the chat from UI
+    try {
+      const io = getSocketIOInstance();
+      if (io) {
+        try { io.to(String(chatId)).emit('chat deleted', { chatId: String(chatId) }); } catch (e) { console.error('emit chat deleted to room failed', e); }
+        const participants = chat.participants && chat.participants.length ? chat.participants : chat.users || [];
+        (participants || []).forEach(p => {
+          const uid = p && (p._id ? String(p._id) : (typeof p === 'string' ? p : (p.toString && p.toString())));
+          if (uid) {
+            try { io.to(uid).emit('chat deleted', { chatId: String(chatId) }); } catch (e) { console.error('emit chat deleted to user failed', uid, e); }
+          }
+        });
+      }
+    } catch (e) {
+      console.error('Failed to emit chat deleted event:', e);
+    }
     res.status(200).json({
       message: "Chat deleted successfully",
       chatId: chatId
