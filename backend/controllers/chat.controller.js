@@ -7,6 +7,7 @@ import Attachment from "../models/attachment.model.js";
 import { deleteFileFromSupabase } from "../utils/supabaseHelper.js";
 import path from "path";
 import { getSocketIOInstance } from "../services/scheduledMessageCron.js";
+import { uploadBase64ImageToSupabase } from "../utils/uploadToSupabase.js";
 
 export const accessChat = asyncHandler(async (req, res) => {
   const { userId } = req.body;
@@ -32,7 +33,22 @@ export const accessChat = asyncHandler(async (req, res) => {
   });
 
   if (isChat.length > 0) {
-    res.send(isChat[0]);
+    // Ensure consistent timestamp on lastMessage for client display
+    const chat = isChat[0];
+    if (chat && chat.lastMessage) {
+      try {
+        const lm = chat.lastMessage;
+        const ts = (lm.isScheduled && lm.scheduledSent && lm.scheduledFor) ? lm.scheduledFor : (lm.createdAt || lm.updatedAt || null);
+        if (lm.toObject && typeof lm.toObject === 'function') {
+          const obj = lm.toObject();
+          obj.timestamp = ts;
+          chat.lastMessage = obj;
+        } else {
+          chat.lastMessage.timestamp = ts;
+        }
+      } catch (e) {}
+    }
+    res.send(chat);
   } else {
     var chatData = {
       chatName: "sender",
@@ -90,26 +106,108 @@ export const fetchChats = asyncHandler(async (req, res) => {
       path: "lastMessage.sender",
       select: "name avatar email",
     });
+
+    // Normalize lastMessage timestamp so clients can rely on `timestamp` field.
+    // If a message was scheduled and has been sent (`scheduledSent === true`),
+    // prefer `scheduledFor` as the display timestamp; otherwise use `createdAt`.
+    const normalized = (Array.isArray(populatedResults) ? populatedResults : []).map((chat) => {
+      if (chat && chat.lastMessage) {
+        try {
+          const lm = chat.lastMessage;
+          const ts = (lm.isScheduled && lm.scheduledSent && lm.scheduledFor) ? lm.scheduledFor : (lm.createdAt || lm.updatedAt || null);
+          // attach a consistent `timestamp` property on lastMessage (lean objects may already have it)
+          if (lm.toObject && typeof lm.toObject === 'function') {
+            const obj = lm.toObject();
+            obj.timestamp = ts;
+            chat.lastMessage = obj;
+          } else {
+            chat.lastMessage.timestamp = ts;
+          }
+        } catch (e) {
+          // ignore and continue
+        }
+      }
+      return chat;
+    });
+
     console.log(results);
-    res.status(200).send(populatedResults);
+    res.status(200).send(normalized);
   } catch (error) {
     res.status(400);
     throw new Error(error.message);
   }
 });
 
+export const updateUserProfile = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
+
+  if (!user) {
+    res.status(404);
+    throw new Error("User not found");
+  }
+
+  // Update fields
+  user.name = req.body.name || user.name;
+  user.email = req.body.email || user.email;
+  user.bio = req.body.bio !== undefined ? req.body.bio : user.bio;
+
+  // ✅ Handle avatar upload
+  if (req.body.avatar) {
+    if (req.body.avatar.startsWith("data:image/")) {
+      // It's a base64 image → upload to Supabase
+      user.avatar = await uploadBase64ImageToSupabase(
+        req.body.avatar,
+        "avatars",
+        "users"
+      );
+    } else {
+      // Already a Supabase public URL → just store it
+      user.avatar = req.body.avatar;
+    }
+  }
+
+  // Update password if provided
+  if (req.body.password) {
+    if (req.body.password.length < 6) {
+      res.status(400);
+      throw new Error("Password must be at least 6 characters long");
+    }
+    user.password = req.body.password;
+  }
+
+  const updatedUser = await user.save();
+
+  res.status(200).json({
+    _id: updatedUser._id,
+    name: updatedUser.name,
+    phoneNumber: updatedUser.phoneNumber,
+    email: updatedUser.email,
+    avatar: updatedUser.avatar, // ✅ Supabase URL
+    bio: updatedUser.bio,
+    isAdmin: updatedUser.isAdmin,
+    token: generateToken(updatedUser._id),
+  });
+});
+
+
 export const createGroupChat = asyncHandler(async (req, res) => {
-  const { name, users, description, isPublic } = req.body;
+  const { name, users, description, isPublic, avatarBase64 } = req.body;
 
   if (!name || !users) {
     return res.status(400).json({ message: "Please fill all the fields" });
   }
 
+  // ✅ HANDLE BOTH ARRAY & STRING (IMPORTANT FIX)
   let parsedUsers;
-  try {
-    parsedUsers = JSON.parse(users);
-  } catch {
-    return res.status(400).json({ message: "Invalid users format" });
+
+  if (Array.isArray(users)) {
+    parsedUsers = users;
+  } else {
+    try {
+      parsedUsers = JSON.parse(users);
+    } catch {
+      return res.status(400).json({ message: "Invalid users format" });
+    }
   }
 
   if (!Array.isArray(parsedUsers) || parsedUsers.length < 2) {
@@ -118,14 +216,20 @@ export const createGroupChat = asyncHandler(async (req, res) => {
     });
   }
 
-  // ✅ avatar path from multer
-  const avatar = req.file ? `/uploads/${req.file.filename}` : "";
+  // ✅ Upload avatar to Supabase
+  let avatar = "";
+  if (avatarBase64) {
+    avatar = await uploadBase64ImageToSupabase(
+      avatarBase64,
+      "avatars",
+      "groups"
+    );
+  }
 
-  console.log("Uploaded file:", req.file);
-
-  // ✅ ensure creator is included only once
-  if (!parsedUsers.includes(req.user._id.toString())) {
-    parsedUsers.push(req.user._id);
+  // ✅ Ensure creator included once
+  const creatorId = req.user._id.toString();
+  if (!parsedUsers.includes(creatorId)) {
+    parsedUsers.push(creatorId);
   }
 
   const groupChat = await Chat.create({
@@ -137,8 +241,8 @@ export const createGroupChat = asyncHandler(async (req, res) => {
     admins: [req.user._id],
     groupSettings: {
       description: description || "",
-      avatar,
-      isPublic: isPublic === "true",
+      avatar, // ✅ SUPABASE PUBLIC URL
+      isPublic: Boolean(isPublic),
     },
   });
 
@@ -146,8 +250,7 @@ export const createGroupChat = asyncHandler(async (req, res) => {
     .populate("users", "-password")
     .populate("groupAdmin", "-password")
     .populate("admins", "name email avatar");
-
-  // Emit socket event to participants so other connected users update immediately
+// Emit socket event to participants so other connected users update immediately
   try {
     const io = getSocketIOInstance();
     const participants = Array.isArray(fullGroupChat.participants) && fullGroupChat.participants.length ? fullGroupChat.participants : fullGroupChat.users || [];
@@ -182,8 +285,7 @@ export const createGroupChat = asyncHandler(async (req, res) => {
   } catch (e) {
     console.error("Failed to emit group created socket event:", e);
   }
-
-  res.status(200).json(fullGroupChat);
+  res.status(201).json(fullGroupChat);
 });
 
 
@@ -422,7 +524,15 @@ export const getRecentChats = async (req, res) => {
       } else if (chat.unreadCount && typeof chat.unreadCount === "object") {
         unread = chat.unreadCount[String(userId)] || chat.unreadCount[userId] || 0;
       }
+      // Determine a timestamp for this chat preview. Prefer lastMessage's scheduledFor
+      // when the last message was a scheduled message that has been sent.
+      let previewTimestamp = chat.updatedAt || chat.timestamp;
+      if (chat.lastMessage) {
+        const lm = chat.lastMessage;
+        previewTimestamp = (lm.isScheduled && lm.scheduledSent && lm.scheduledFor) ? lm.scheduledFor : (lm.createdAt || lm.updatedAt || previewTimestamp);
+      }
 
+      // For group chats, return all members; for 1-on-1, return the other user
       let lastMessageText = "";
       if (chat.lastMessage) {
         const msg = chat.lastMessage;
@@ -455,7 +565,7 @@ export const getRecentChats = async (req, res) => {
       const chatData = {
         chatId: chat._id,
         lastMessage: lastMessageText || "Say hi!",
-        timestamp: chat.updatedAt || chat.timestamp,
+        timestamp: previewTimestamp,
         unreadCount: unread,
         isGroupChat: !!chat.isGroupChat,
         chatName: chat.chatName,

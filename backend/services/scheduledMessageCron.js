@@ -39,7 +39,6 @@ const sendScheduledMessages = async () => {
     for (const message of dueMessages) {
       try {
         // Mark as no longer scheduled and set as sent
-        message.isScheduled = false;
         message.scheduledSent = true;
         await message.save();
 
