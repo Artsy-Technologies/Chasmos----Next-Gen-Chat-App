@@ -19,10 +19,15 @@ export const getUserProfile = async (req, res) => {
       name: user.name,
       email: user.email,
       phoneNumber: user.phoneNumber,
-      avatar: user.avatar,
+      // Prefer DB avatar; fall back to common alternate fields if present (pic/picture), then default
+      avatar:
+        user.avatar || user.picture || user.pic || "https://icon-library.com/images/anonymous-avatar-icon/anonymous-avatar-icon-25.jpg",
       bio: user.bio,
       createdAt: user.createdAt,
-      isOnline: user.isOnline
+      isOnline: user.isOnline,
+      // Business fields
+      isBusiness: user.isBusiness || false,
+      businessCategory: user.businessCategory || ""
     });
   } catch (error) {
     console.error('Error fetching user profile:', error);
@@ -50,9 +55,10 @@ export const getUserMediaAndDocs = async (req, res) => {
       });
     }
 
-    // Find all messages in this chat with attachments
+    // Find all messages in this chat with attachments, excluding messages hidden from current user
     const messages = await Message.find({
-      chat: chat._id
+      chat: chat._id,
+      excludeUsers: { $not: { $elemMatch: { $eq: currentUserId } } }
     }).sort({ createdAt: -1 });
 
     const media = [];
@@ -111,3 +117,4 @@ export const getUserMediaAndDocs = async (req, res) => {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
+

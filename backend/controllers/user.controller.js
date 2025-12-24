@@ -3,6 +3,11 @@ import User from "../models/user.model.js";
 import generateToken from "../config/generatetoken.js";
 import { isOnline, getOnlineList } from "../services/onlineUsers.js";
 import { uploadBase64ImageToSupabase } from "../utils/uploadToSupabase.js";
+import { Resend } from "resend";
+import twilio from "twilio";
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+const DEBUG_EMAILS = process.env.DEBUG_EMAILS === 'true';
 
 // export const allUsers = asyncHandler(async (req, res) => {
 //   const keyword = req.query.search
@@ -225,7 +230,8 @@ export const authUser = asyncHandler(async (req, res) => {
   }
 
   if (user && (await user.matchPassword(password))) {
-    res.status(200).json({
+    // Prepare response
+    const baseResponse = {
       _id: user._id,
       name: user.name,
       email: user.email,
@@ -236,7 +242,41 @@ export const authUser = asyncHandler(async (req, res) => {
       isBusiness: user.isBusiness,
       businessCategory: user.businessCategory,
       token: generateToken(user._id),
-    });
+    };
+
+    // Attempt auto-sync if enabled
+    try {
+      const { getOAuth2Client, CONTACTS_SCOPES } = await import('../config/google-auth.config.js');
+      const jwt = await import('jsonwebtoken');
+      const { performSyncForUser } = await import('./contact.controller.js');
+      
+      if (user.googleContactsSyncEnabled) {
+        console.log('Auto-syncing Google contacts during password login for user', user._id);
+        if (user.googleRefreshToken) {
+          await performSyncForUser(user._id);
+          baseResponse.googleContactsSynced = true;
+        } else {
+          console.log('No refresh token available for user', user._id);
+          const oauth2Client = getOAuth2Client();
+          const stateToken = jwt.default.sign({ id: user._id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '10m' });
+          const connectUrl = oauth2Client.generateAuthUrl({
+            access_type: 'offline',
+            scope: CONTACTS_SCOPES,
+            login_hint: user.email,
+            prompt: 'consent',
+            state: stateToken,
+          });
+          baseResponse.needsGoogleConnect = true;
+          baseResponse.googleConnectUrl = connectUrl;
+        }
+      }
+    } catch (err) {
+      console.error('Auto-sync failed during password login for user', user._id, err);
+      baseResponse.googleContactsSynced = false;
+      baseResponse.googleSyncError = err?.message || 'sync_failed';
+    }
+
+    res.status(200).json(baseResponse);
   } else {
     res.status(401);
     throw new Error("Invalid email/phone or password");
@@ -263,23 +303,22 @@ export const updateUserProfile = asyncHandler(async (req, res) => {
     user.bio = req.body.bio !== undefined ? req.body.bio : user.bio;
     
     
-  // ✅ SUPABASE AVATAR UPLOAD (ONLY CHANGE)
-  if (req.body.avatarBase64) {
-    user.avatar = await uploadBase64ImageToSupabase(
-      req.body.avatarBase64,
-      "avatars",
-      "users"
-    );
-  }
-    
-  // ✅ SUPABASE AVATAR UPLOAD (ONLY CHANGE)
-  if (req.body.avatarBase64) {
-    user.avatar = await uploadBase64ImageToSupabase(
-      req.body.avatarBase64,
-      "avatars",
-      "users"
-    );
-  }
+    // Avatar handling: clear, base64 upload, or direct URL
+    if (req.body.clearAvatar === true || req.body.avatar === null) {
+      user.avatar = "https://icon-library.com/images/anonymous-avatar-icon/anonymous-avatar-icon-25.jpg";
+    } else if (req.body.avatarBase64) {
+      user.avatar = await uploadBase64ImageToSupabase(
+        req.body.avatarBase64,
+        "avatars",
+        "users"
+      );
+    } else if (req.body.avatar && typeof req.body.avatar === 'string') {
+      if (req.body.avatar.startsWith("data:image/")) {
+        user.avatar = await uploadBase64ImageToSupabase(req.body.avatar, "avatars", "users");
+      } else {
+        user.avatar = req.body.avatar;
+      }
+    }
 
     // BUSINESS update (optional)
     if (req.body.isBusiness !== undefined) {
@@ -317,12 +356,13 @@ export const updateUserProfile = asyncHandler(async (req, res) => {
 
 // Get user settings
 export const getUserSettings = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user._id).select("settings");
+  const user = await User.findById(req.user._id).select("settings googleContactsSyncEnabled");
 
   if (user) {
     res.status(200).json({
       notifications: user.settings?.notifications ?? true,
       sound: user.settings?.sound ?? true,
+      googleContactsSyncEnabled: user.googleContactsSyncEnabled ?? false,
     });
   } else {
     res.status(404);
@@ -347,12 +387,17 @@ export const updateUserSettings = asyncHandler(async (req, res) => {
     if (req.body.sound !== undefined) {
       user.settings.sound = req.body.sound;
     }
+    // Allow toggling Google Contacts sync (stored on user root)
+    if (req.body.googleContactsSyncEnabled !== undefined) {
+      user.googleContactsSyncEnabled = req.body.googleContactsSyncEnabled;
+    }
 
     const updatedUser = await user.save();
 
     res.status(200).json({
       notifications: updatedUser.settings.notifications,
       sound: updatedUser.settings.sound,
+      googleContactsSyncEnabled: updatedUser.googleContactsSyncEnabled ?? false,
     });
   } else {
     res.status(404);
@@ -471,6 +516,152 @@ export const getAcceptedChatRequests = asyncHandler(async (req, res) => {
   }).select("_id name email avatar");
 
   res.json(users);
+});
+
+// POST /api/user/forgot-password
+export const sendPasswordResetOtp = asyncHandler(async (req, res) => {
+  const { emailOrPhone } = req.body;
+  if (!emailOrPhone) {
+    res.status(400);
+    throw new Error("Please provide email or phone");
+  }
+
+  let user = null;
+  if (String(emailOrPhone).includes("@")) {
+    user = await User.findOne({ email: String(emailOrPhone).toLowerCase().trim() });
+  } else {
+    user = await User.findOne({ phoneNumber: String(emailOrPhone).trim() });
+  }
+
+  if (!user) {
+    res.status(404);
+    throw new Error("User not found");
+  }
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  user.passwordResetOTP = otp;
+  user.passwordResetOTPExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+  user.passwordResetVerified = false;
+  await user.save();
+  console.log(`Saved password reset OTP for user ${user._id} (${user.email || user.phoneNumber})`);
+  if (DEBUG_EMAILS) console.log(`OTP for ${user._id}: ${otp}`);
+
+  // Send via email or SMS
+  try {
+    if (String(emailOrPhone).includes("@")) {
+      // Email via Resend
+      const fromAddr = process.env.RESEND_FROM || 'Chasmos <onboarding@resend.dev>';
+      const sendRes = await resend.emails.send({
+        from: fromAddr,
+        to: user.email,
+        subject: 'Chasmos password reset OTP',
+        html: `<p>Your Chasmos OTP is: <strong>${otp}</strong>.</p><p>It expires in 10 minutes.</p>`,
+      });
+      console.log(`Password reset OTP email sent to ${user.email}`);
+      if (DEBUG_EMAILS) console.log('Resend response:', sendRes);
+    } else {
+      // SMS via Twilio
+      const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH_TOKEN);
+      const toNumber = user.phoneNumber;
+      const smsRes = await client.messages.create({
+        body: `Your Chasmos OTP is ${otp}. It expires in 10 minutes.`,
+        from: process.env.TWILIO_FROM,
+        to: toNumber,
+      });
+      console.log(`Password reset OTP SMS sent to ${toNumber}`);
+      if (DEBUG_EMAILS) console.log('Twilio response:', smsRes);
+    }
+  } catch (err) {
+    console.error('Failed to send OTP:', err);
+    if (err?.response) console.error('Send error response:', err.response);
+    if (err?.message) console.error('Send error message:', err.message);
+    // still keep OTP stored but inform client
+    return res.status(500).json({ message: 'Failed to send OTP' });
+  }
+
+  res.status(200).json({ message: 'OTP sent' });
+});
+
+// POST /api/user/verify-reset-otp
+export const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
+  const { emailOrPhone, otp } = req.body;
+  if (!emailOrPhone || !otp) {
+    res.status(400);
+    throw new Error('Please provide email/phone and otp');
+  }
+
+  let user = null;
+  if (String(emailOrPhone).includes("@")) {
+    user = await User.findOne({ email: String(emailOrPhone).toLowerCase().trim() });
+  } else {
+    user = await User.findOne({ phoneNumber: String(emailOrPhone).trim() });
+  }
+
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+
+  if (!user.passwordResetOTP || !user.passwordResetOTPExpires) {
+    res.status(400);
+    throw new Error('No OTP request found');
+  }
+
+  if (Date.now() > Number(user.passwordResetOTPExpires)) {
+    res.status(400);
+    throw new Error('OTP expired');
+  }
+
+  if (String(otp).trim() !== String(user.passwordResetOTP).trim()) {
+    res.status(400);
+    throw new Error('Invalid OTP');
+  }
+
+  user.passwordResetVerified = true;
+  await user.save();
+
+  res.status(200).json({ message: 'OTP verified' });
+});
+
+// POST /api/user/reset-password
+export const resetPasswordFromOtp = asyncHandler(async (req, res) => {
+  const { emailOrPhone, newPassword } = req.body;
+  if (!emailOrPhone || !newPassword) {
+    res.status(400);
+    throw new Error('Please provide email/phone and newPassword');
+  }
+
+  let user = null;
+  if (String(emailOrPhone).includes("@")) {
+    user = await User.findOne({ email: String(emailOrPhone).toLowerCase().trim() });
+  } else {
+    user = await User.findOne({ phoneNumber: String(emailOrPhone).trim() });
+  }
+
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+
+  if (!user.passwordResetVerified || Date.now() > Number(user.passwordResetOTPExpires || 0)) {
+    res.status(400);
+    throw new Error('OTP not verified or expired');
+  }
+
+  if (newPassword.length < 6) {
+    res.status(400);
+    throw new Error('Password must be at least 6 characters long');
+  }
+
+  user.password = newPassword;
+  // clear reset fields
+  user.passwordResetOTP = undefined;
+  user.passwordResetOTPExpires = undefined;
+  user.passwordResetVerified = false;
+
+  await user.save();
+
+  res.status(200).json({ message: 'Password reset successful' });
 });
 
 
@@ -602,4 +793,88 @@ export const getBusinessUsers = async (req, res) => {
     res.status(500).json({ message: "Failed to fetch business users" });
   }
 };
+
+  // POST /api/user/changes
+  // Request body: { keys: ["e:email@example.com", "p:1234567890", ...] }
+  // Responds 204 when no changes, or 200 with { added: [...], removed: [...] }
+  export const getUserChanges = asyncHandler(async (req, res) => {
+    const clientKeys = Array.isArray(req.body?.keys) ? req.body.keys.map(String) : [];
+
+    // helpers
+    const normalizePhone = (p) => {
+      if (!p) return "";
+      let digits = String(p).replace(/\D/g, "");
+      if (digits.length > 10) digits = digits.slice(-10);
+      return digits;
+    };
+    const normalizeName = (n) => {
+      if (!n) return "";
+      return String(n).trim().toLowerCase().replace(/\s+/g, " ");
+    };
+    const stableKey = (c) => {
+      if (!c) return "";
+      const email = c.email ? String(c.email).toLowerCase().trim() : "";
+      if (email) return `e:${email}`;
+      const id = c.id || c._id || "";
+      if (id) return `i:${String(id)}`;
+      const phone = normalizePhone(c.phone || c.phoneNumber || c._rawPhone || c.mobile || "");
+      if (phone) return `p:${phone}`;
+      const name = normalizeName(c.name || c.displayName || c.business || "");
+      if (name) return `n:${name}`;
+      return "";
+    };
+
+    // build server-side map of keys -> item
+    const serverMap = new Map();
+
+    // fetch normal users (exclude requester)
+    const users = await User.find({ _id: { $ne: req.user._id } }).select('-password -__v');
+    users.forEach((u) => {
+      const obj = (typeof u.toObject === 'function') ? u.toObject() : u;
+      obj.type = obj.isBusiness ? 'business' : 'user';
+      const k = stableKey(obj);
+      if (k) serverMap.set(k, obj);
+    });
+
+    // also fetch business users explicitly (in case isBusiness flagged differently)
+    const biz = await User.find({ isBusiness: true }).select('-password -__v');
+    biz.forEach((b) => {
+      const obj = (typeof b.toObject === 'function') ? b.toObject() : b;
+      obj.type = 'business';
+      const k = stableKey(obj);
+      if (k) serverMap.set(k, obj);
+    });
+
+    // compute sets
+    const serverKeys = new Set(serverMap.keys());
+    const clientKeySet = new Set((clientKeys || []).filter(Boolean));
+
+    // additions: keys present on server but not on client
+    const addedKeys = Array.from(serverKeys).filter((k) => !clientKeySet.has(k));
+    // removals: keys present on client but not on server
+    const removedKeys = Array.from(clientKeySet).filter((k) => !serverKeys.has(k));
+
+    if (addedKeys.length === 0 && removedKeys.length === 0) {
+      // Per request: if nothing changed, return nothing (204 No Content)
+      return res.status(204).send();
+    }
+
+    const added = addedKeys.map((k) => {
+      const item = serverMap.get(k);
+      // sanitize and return minimal fields the frontend expects
+      return {
+        id: item._id || item.id || stableKey(item),
+        name: item.name || item.displayName || item.business || 'Unknown',
+        email: item.email,
+        avatar: item.avatar || null,
+        phone: item.phoneNumber || item.phone || undefined,
+        type: item.type || (item.isBusiness ? 'business' : 'user'),
+        businessCategory: item.businessCategory || undefined,
+        title: item.title || undefined,
+        business: item.businessName || item.business || undefined,
+      };
+    });
+
+    return res.status(200).json({ added, removed: removedKeys });
+  });
 

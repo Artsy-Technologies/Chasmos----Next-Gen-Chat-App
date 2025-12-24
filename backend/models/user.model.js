@@ -16,9 +16,8 @@ const userSchema = new mongoose.Schema(
     },
     phoneNumber: { 
       type: String, 
-      required: false, 
-      unique: true,
-      sparse: true // allow multiple documents without phoneNumber
+      required: true, 
+      unique: true
     },
     avatar: { 
       type: String,
@@ -91,6 +90,17 @@ const userSchema = new mongoose.Schema(
     googleContactsSyncEnabled: {
       type: Boolean,
       default: false
+    },
+    // Password reset OTP fields
+    passwordResetOTP: {
+      type: String,
+    },
+    passwordResetOTPExpires: {
+      type: Date,
+    },
+    passwordResetVerified: {
+      type: Boolean,
+      default: false,
     },
     // Stored synced Google contacts (basic info needed for NewChat / GroupCreation)
     googleContacts: [

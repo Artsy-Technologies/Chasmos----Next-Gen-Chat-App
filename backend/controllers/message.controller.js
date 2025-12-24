@@ -2,6 +2,7 @@ import asyncHandler from "express-async-handler";
 import mongoose from "mongoose";
 import Message from "../models/message.model.js";
 import Chat from "../models/chat.model.js";
+import Group from "../models/group.model.js";
 import User from "../models/user.model.js";
 import Attachment from "../models/attachment.model.js";
 import { deleteFileFromSupabase } from "../utils/supabaseHelper.js";
@@ -10,7 +11,7 @@ import { deleteFileFromSupabase } from "../utils/supabaseHelper.js";
 const normalizeMessage = (m) => {
   const obj = (m && m.toObject) ? m.toObject() : m;
   obj.timestamp = obj.isScheduled ? obj.scheduledFor : obj.createdAt;
-    console.log("Normalized message:", obj);
+
   return obj;
 
 };
@@ -18,8 +19,36 @@ const normalizeMessage = (m) => {
 export const allMessages = asyncHandler(async (req, res) => {
   try {
     // Exclude messages that are scheduled and not yet sent
+    // If this is a group chat and the requesting user has left previously,
+    // only return messages created before their last leftAt timestamp.
+    let createdAtFilter = {};
+    try {
+      const group = await Group.findOne({ chat: req.params.chatId }).select('leftBy leftAt').lean();
+      if (group && Array.isArray(group.leftBy) && group.leftBy.length) {
+        // find last index of this user in leftBy
+        const uid = String(req.user._id);
+        const indices = [];
+        group.leftBy.forEach((entry, idx) => {
+          try { if (String(entry) === uid) indices.push(idx); } catch (e) {}
+        });
+        if (indices.length) {
+          const lastIdx = indices[indices.length - 1];
+          const leftAt = group.leftAt && group.leftAt[lastIdx];
+          if (leftAt) {
+            createdAtFilter = { createdAt: { $lte: new Date(leftAt) } };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('allMessages: failed to compute leftAt filter', e && e.message);
+    }
     const messages = await Message.find({
       chat: req.params.chatId,
+      ...createdAtFilter,
+      // Exclude messages that the current user has soft-deleted
+      deletedFor: { $not: { $elemMatch: { $eq: req.user._id } } },
+      // Exclude messages explicitly hidden from this user
+      excludeUsers: { $not: { $elemMatch: { $eq: req.user._id } } },
       $or: [
         { isScheduled: { $ne: true } },
         { scheduledSent: true }
@@ -49,6 +78,7 @@ export const allMessages = asyncHandler(async (req, res) => {
       })
       .populate("starredBy.user", "name avatar")
       .populate("reactions.user", "name avatar")
+      .populate("mentions", "name avatar")
       .sort({ createdAt: 1 });
       
     // Attach a normalized `timestamp` field so clients can use scheduledFor when appropriate
@@ -61,12 +91,12 @@ export const allMessages = asyncHandler(async (req, res) => {
 });
 
 export const sendMessage = asyncHandler(async (req, res) => {
-  const { content, chatId, attachments, type = "text", isScheduled, scheduledFor, userId, poll, repliedTo } = req.body;
+  const { content, chatId, attachments, type = "text", isScheduled, scheduledFor, userId, poll, repliedTo, mentions } = req.body;
   // normalize isScheduled which may be boolean or string from client
   const isScheduledFlag = (isScheduled === true || isScheduled === 'true' || isScheduled === '1' || isScheduled === 1);
   // normalize scheduledFor into a Date if present
   const scheduledForDate = scheduledFor ? new Date(scheduledFor) : null;
-  console.log("➡️ [SEND MESSAGE] Request received", { chatId, userId, content, attachments, type, isScheduled: isScheduledFlag, scheduledFor: scheduledForDate, poll, repliedTo });
+  //console.log("➡️ [SEND MESSAGE] Request received", { chatId, userId, content, attachments, type, isScheduled: isScheduledFlag, scheduledFor: scheduledForDate, poll, repliedTo });
   if (!content && (!attachments || attachments.length === 0) && !poll) {
     console.log("Invalid data passed into request");
     return res.sendStatus(400);
@@ -151,6 +181,18 @@ export const sendMessage = asyncHandler(async (req, res) => {
     console.warn('[sendMessage] Ignoring invalid repliedTo ids:', invalidRepliedTo);
   }
 
+  // Normalize and validate mentions (array of user ids)
+  let normalizedMentions = Array.isArray(mentions) ? mentions : mentions ? [mentions] : [];
+  const invalidMentions = [];
+  normalizedMentions = normalizedMentions.filter((id) => {
+    if (mongoose.Types.ObjectId.isValid(String(id))) return true;
+    invalidMentions.push(id);
+    return false;
+  });
+  if (invalidMentions.length) {
+    console.warn('[sendMessage] Ignoring invalid mention ids:', invalidMentions);
+  }
+
   var newMessage = {
     sender: req.user._id,
     content: content,
@@ -159,6 +201,8 @@ export const sendMessage = asyncHandler(async (req, res) => {
     attachments: attachments || [],
     // allow replying to one or multiple messages (only valid ObjectIds)
     repliedTo: normalizedRepliedTo,
+    // store mentions (validated ObjectIds)
+    mentions: normalizedMentions,
     isScheduled: !!isScheduledFlag,
     scheduledFor: isScheduledFlag ? scheduledForDate : null,
     scheduledSent: false,
@@ -206,6 +250,10 @@ export const sendMessage = asyncHandler(async (req, res) => {
       ]
     });
     message = await message.populate("chat");
+    // Populate mentions so clients receive user objects (name/avatar) instead of raw ids
+    message = await message.populate("mentions", "name avatar");
+    // Ensure mentions are populated for the just-created message
+    message = await message.populate("mentions", "name avatar");
     message = await User.populate(message, {
       path: "chat.users",
       select: "name avatar email",
@@ -215,6 +263,14 @@ export const sendMessage = asyncHandler(async (req, res) => {
     if (!isScheduled) {
       await Chat.findByIdAndUpdate(chat._id, { lastMessage: message });
       console.log("[sendMessage] Updated chat lastMessage:", chat._id);
+    }
+
+    // When a new message is created, clear any soft-deletes on the chat
+    // so the chat revives for all participants.
+    try {
+      await Chat.findByIdAndUpdate(chat._id, { $set: { deletedBy: [] } });
+    } catch (err) {
+      console.warn('[sendMessage] Failed to clear chat.deletedBy:', err && err.message);
     }
 
     // Attach normalized timestamp before sending
@@ -415,9 +471,12 @@ export const getStarredMessages = asyncHandler(async (req, res) => {
 
   const messages = await Message.find({
     chat: chatId,
-    "starredBy.user": userId
+    "starredBy.user": userId,
+    // Exclude messages explicitly hidden from this user
+    excludeUsers: { $not: { $elemMatch: { $eq: userId } } }
   })
     .populate("sender", "name avatar email")
+    .populate({ path: "chat", select: "chatName isGroupChat groupSettings.avatar" })
     .populate("attachments")
     .populate("starredBy.user", "name avatar")
     .sort({ createdAt: -1 });
@@ -488,11 +547,7 @@ export const removeReaction = asyncHandler(async (req, res) => {
 });
 
 export const forwardMessage = asyncHandler(async (req, res) => {
-  console.log("➡️ [FORWARD MESSAGE] Request received");
-  console.log("📥 Body:", req.body);
-  console.log("👤 User:", req.user?._id);
-
-  const { content, chatId, attachments, type = "text", isForwarded = true, repliedTo } = req.body;
+  const { content, chatId, attachments, type = "text", isForwarded = true, repliedTo, mentions } = req.body;
 
   // Validate basic input
   if (!content && (!attachments || attachments.length === 0)) {
@@ -515,11 +570,33 @@ export const forwardMessage = asyncHandler(async (req, res) => {
     throw new Error("Chat not found");
   }
 
-  console.log("👥 Chat users:", chat.users);
+  //console.log("👥 Chat users:", chat.users, "participants:", chat.participants);
 
-  // Check if user is part of the chat
-  const isUserInChat = chat.users.some(
-    (user) => user.toString() === req.user._id.toString()
+  // Determine membership list. For group chats, prefer the separate Group model's `participants` array
+  // (some groups store members there, linked by `group.chat`), otherwise fall back to chat.users or chat.participants.
+  let chatMembers = [];
+  if (chat.isGroupChat) {
+    try {
+      const groupObj = await Group.findOne({ chat: chatId }).select('participants').lean();
+      if (groupObj && Array.isArray(groupObj.participants) && groupObj.participants.length) {
+        chatMembers = groupObj.participants;
+      } else if (Array.isArray(chat.users) && chat.users.length) {
+        chatMembers = chat.users;
+      } else if (Array.isArray(chat.participants) && chat.participants.length) {
+        chatMembers = chat.participants;
+      }
+    } catch (e) {
+      console.warn('forwardMessage: failed to load Group participants', e && e.message);
+      chatMembers = (Array.isArray(chat.users) && chat.users.length) ? chat.users : (Array.isArray(chat.participants) ? chat.participants : []);
+    }
+  } else {
+    chatMembers = (Array.isArray(chat.users) && chat.users.length > 0)
+      ? chat.users
+      : (Array.isArray(chat.participants) ? chat.participants : []);
+  }
+
+  const isUserInChat = chatMembers.some(
+    (user) => user && user.toString() === req.user._id.toString()
   );
 
   if (!isUserInChat) {
@@ -559,6 +636,18 @@ export const forwardMessage = asyncHandler(async (req, res) => {
     console.warn('[forwardMessage] Ignoring invalid repliedTo ids:', invalidForwardRepliedTo);
   }
 
+  // Normalize and validate mentions for forwarded messages
+  let normalizedForwardMentions = Array.isArray(mentions) ? mentions : mentions ? [mentions] : [];
+  const invalidForwardMentions = [];
+  normalizedForwardMentions = normalizedForwardMentions.filter((id) => {
+    if (mongoose.Types.ObjectId.isValid(String(id))) return true;
+    invalidForwardMentions.push(id);
+    return false;
+  });
+  if (invalidForwardMentions.length) {
+    console.warn('[forwardMessage] Ignoring invalid mention ids:', invalidForwardMentions);
+  }
+
   const newMessage = {
     sender: req.user._id,
     content: content,
@@ -567,19 +656,20 @@ export const forwardMessage = asyncHandler(async (req, res) => {
     attachments: attachments || [],
     isForwarded: isForwarded,
     repliedTo: normalizedForwardRepliedTo,
+    mentions: normalizedForwardMentions,
   };
 
-  console.log("📝 Creating message:", newMessage);
+  //console.log("📝 Creating message:", newMessage);
 
   try {
     var message = await Message.create(newMessage);
-    console.log("✅ Message created:", message._id);
+    //console.log("✅ Message created:", message._id);
 
     message = await message.populate("sender", "name avatar");
-    console.log("📌 Populated sender");
+    //console.log("📌 Populated sender");
 
     message = await message.populate("attachments");
-    console.log("📎 Populated attachments");
+    //console.log("📎 Populated attachments");
 
     // populate replied messages if any
     message = await message.populate({
@@ -589,23 +679,25 @@ export const forwardMessage = asyncHandler(async (req, res) => {
         { path: "attachments" }
       ]
     });
-    console.log("📎 Populated repliedTo messages");
+    //console.log("📎 Populated repliedTo messages");
 
     message = await message.populate("chat");
-    console.log("💬 Populated chat");
-
+    //console.log("💬 Populated chat");
+    // Populate mentions so forwarded messages include user info
+    message = await message.populate("mentions", "name avatar");
+    console.log("🔖 Populated mentions");
     message = await User.populate(message, {
       path: "chat.users",
       select: "name avatar email",
     });
-    console.log("👥 Populated chat users info");
+    //console.log("👥 Populated chat users info");
 
-    console.log("🆙 Updating chat lastMessage");
+    //console.log("🆙 Updating chat lastMessage");
     await Chat.findByIdAndUpdate(chatId, { lastMessage: message });
 
     // Attach normalized timestamp for forwarded message
     const forwardOut = normalizeMessage(message);
-    console.log("🎉 Forward message complete");
+    //console.log("🎉 Forward message complete");
     res.json(forwardOut);
 
   } catch (error) {
@@ -797,8 +889,6 @@ export const getPinnedMessages = asyncHandler(async (req, res) => {
 // Get media attachments (images, videos) from chats
 export const getMediaAttachments = asyncHandler(async (req, res) => {
   try {
-    console.log('📸 [getMediaAttachments] Request received');
-    console.log('Query params:', req.query);
     
     const { chatIds } = req.query;
 
@@ -810,7 +900,6 @@ export const getMediaAttachments = asyncHandler(async (req, res) => {
 
     // Parse comma-separated chat IDs
     const chatIdArray = chatIds.split(',').map(id => id.trim());
-    console.log('📋 Parsed chat IDs:', chatIdArray);
 
     // Verify user has access to these chats
     const chats = await Chat.find({
@@ -818,19 +907,20 @@ export const getMediaAttachments = asyncHandler(async (req, res) => {
       users: req.user._id
     });
 
-    console.log(`✅ Found ${chats.length} chats user has access to`);
-
     if (chats.length === 0) {
       console.log('⚠️ No accessible chats found, returning empty array');
       return res.json([]);
     }
 
     const verifiedChatIds = chats.map(chat => chat._id);
-    console.log('🔐 Verified chat IDs:', verifiedChatIds);
 
     // Find all messages with media attachments in these chats
     const messages = await Message.find({
       chat: { $in: verifiedChatIds },
+      // Include messages that are not deletedFor the user OR where the user is listed in keepFor
+      $or: [ { deletedFor: { $ne: req.user._id } }, { keepFor: req.user._id } ],
+      // Exclude messages explicitly hidden from this user
+      excludeUsers: { $not: { $elemMatch: { $eq: req.user._id } } },
       attachments: { $exists: true, $ne: [] }
     })
       .populate({
@@ -842,8 +932,6 @@ export const getMediaAttachments = asyncHandler(async (req, res) => {
       .populate('sender', 'name email avatar')
       .sort({ createdAt: -1 })
       .lean();
-
-    console.log(`📨 Found ${messages.length} messages with attachments`);
 
     // Extract and flatten attachments
     const mediaItems = [];
@@ -859,6 +947,7 @@ export const getMediaAttachments = asyncHandler(async (req, res) => {
               mimeType: attachment.mimeType,
               fileSize: attachment.fileSize,
               createdAt: message.createdAt,
+              sender: message.sender?._id,
               senderName: message.sender?.name || message.sender?.email,
               chatId: message.chat,
               messageId: message._id  // Add message ID for navigation
@@ -868,7 +957,6 @@ export const getMediaAttachments = asyncHandler(async (req, res) => {
       }
     });
 
-    console.log(`✨ Returning ${mediaItems.length} media items`);
     res.json(mediaItems);
   } catch (error) {
     res.status(400);
@@ -879,8 +967,6 @@ export const getMediaAttachments = asyncHandler(async (req, res) => {
 // Get link attachments from chats
 export const getLinkAttachments = asyncHandler(async (req, res) => {
   try {
-    console.log('🔗 [getLinkAttachments] Request received');
-    console.log('Query params:', req.query);
     
     const { chatIds } = req.query;
 
@@ -892,7 +978,6 @@ export const getLinkAttachments = asyncHandler(async (req, res) => {
 
     // Parse comma-separated chat IDs
     const chatIdArray = chatIds.split(',').map(id => id.trim());
-    console.log('📋 Parsed chat IDs:', chatIdArray);
 
     // Verify user has access to these chats
     const chats = await Chat.find({
@@ -912,6 +997,10 @@ export const getLinkAttachments = asyncHandler(async (req, res) => {
     // Find all messages with URLs in content
     const messages = await Message.find({
       chat: { $in: verifiedChatIds },
+      // Include messages that are not deletedFor the user OR where the user is listed in keepFor
+      $or: [ { deletedFor: { $ne: req.user._id } }, { keepFor: req.user._id } ],
+      // Exclude messages explicitly hidden from this user
+      excludeUsers: { $not: { $elemMatch: { $eq: req.user._id } } },
       content: { $regex: urlRegex }
     })
       .populate('sender', 'name email avatar')
@@ -929,6 +1018,7 @@ export const getLinkAttachments = asyncHandler(async (req, res) => {
             url: url,
             content: message.content,
             createdAt: message.createdAt,
+            sender: message.sender?._id,
             senderName: message.sender?.name || message.sender?.email,
             chatId: message.chat,
             messageId: message._id  // Add message ID for navigation
@@ -947,8 +1037,6 @@ export const getLinkAttachments = asyncHandler(async (req, res) => {
 // Get document attachments from chats
 export const getDocumentAttachments = asyncHandler(async (req, res) => {
   try {
-    console.log('📄 [getDocumentAttachments] Request received');
-    console.log('Query params:', req.query);
     
     const { chatIds } = req.query;
 
@@ -960,7 +1048,6 @@ export const getDocumentAttachments = asyncHandler(async (req, res) => {
 
     // Parse comma-separated chat IDs
     const chatIdArray = chatIds.split(',').map(id => id.trim());
-    console.log('📋 Parsed chat IDs:', chatIdArray);
 
     // Verify user has access to these chats
     const chats = await Chat.find({
@@ -977,6 +1064,10 @@ export const getDocumentAttachments = asyncHandler(async (req, res) => {
     // Find all messages with document attachments in these chats
     const messages = await Message.find({
       chat: { $in: verifiedChatIds },
+      // Include messages that are not deletedFor the user OR where the user is listed in keepFor
+      $or: [ { deletedFor: { $ne: req.user._id } }, { keepFor: req.user._id } ],
+      // Exclude messages explicitly hidden from this user
+      excludeUsers: { $not: { $elemMatch: { $eq: req.user._id } } },
       attachments: { $exists: true, $ne: [] }
     })
       .populate({
@@ -1008,6 +1099,7 @@ export const getDocumentAttachments = asyncHandler(async (req, res) => {
               mimeType: attachment.mimeType,
               fileSize: attachment.fileSize,
               createdAt: message.createdAt,
+              sender: message.sender?._id,
               senderName: message.sender?.name || message.sender?.email,
               chatId: message.chat,
               messageId: message._id  // Add message ID for navigation
@@ -1132,4 +1224,87 @@ export const updateScheduledMessage = asyncHandler(async (req, res) => {
     message: "Scheduled message updated successfully",
     updatedMessage: message
   });
+});
+
+// Update message delivery status (recipient acknowledges receipt -> 'delivered')
+export const updateMessageStatus = asyncHandler(async (req, res) => {
+  const { messageId } = req.body;
+  const userId = req.user._id;
+
+  if (!messageId) {
+    res.status(400);
+    throw new Error('messageId is required');
+  }
+
+  const message = await Message.findById(messageId).populate('chat');
+  if (!message) {
+    res.status(404);
+    throw new Error('Message not found');
+  }
+
+  const chat = await Chat.findById(message.chat);
+  if (!chat) {
+    res.status(404);
+    throw new Error('Chat not found');
+  }
+
+  // Only update delivered for 1-on-1 chats. For group chats we rely on readBy and markAsRead.
+  if (!chat.isGroupChat) {
+    // Ensure only the recipient (not the sender) can mark delivered
+    if (message.sender.toString() === userId.toString()) {
+      return res.json({ message: 'Sender cannot mark own message delivered', updated: false });
+    }
+
+    if (message.status !== 'delivered' && message.status !== 'read') {
+      message.status = 'delivered';
+      await message.save();
+    }
+  }
+
+  res.json({ message: 'Status updated', status: message.status });
+});
+
+// Mark messages in a chat as read by the current user
+export const markAsRead = asyncHandler(async (req, res) => {
+  const { chatId } = req.body;
+  const userId = req.user._id;
+
+  if (!chatId) {
+    res.status(400);
+    throw new Error('chatId is required');
+  }
+
+  const chat = await Chat.findById(chatId).lean();
+  if (!chat) {
+    res.status(404);
+    throw new Error('Chat not found');
+  }
+
+  if (chat.isGroupChat) {
+    // For group chats: add user to readBy for unread messages, and set status to 'read' when everyone has read
+    const msgs = await Message.find({ chat: chatId, $or: [ { readBy: { $exists: false } }, { readBy: { $nin: [userId] } } ], excludeUsers: { $not: { $elemMatch: { $eq: userId } } } });
+    const updated = [];
+    for (const m of msgs) {
+      if (!m.readBy) m.readBy = [];
+      if (!m.readBy.map(r => String(r)).includes(String(userId))) {
+        m.readBy.push(userId);
+      }
+      // If all users have read, mark message status as 'read'
+      const uniqueReaders = (m.readBy || []).map(r => String(r));
+      const participantIds = (chat.participants && chat.participants.length) ? chat.participants.map(p => String(p)) : (chat.users || []).map(u => String(u));
+      const allRead = participantIds.every(pid => uniqueReaders.includes(pid));
+      if (allRead) m.status = 'read';
+      await m.save();
+      updated.push(m._id);
+    }
+
+    return res.json({ message: 'Group messages marked read', updatedCount: updated.length, updatedIds: updated });
+  } else {
+    // 1-on-1 chats: mark all messages in chat not sent by current user as 'read'
+    const result = await Message.updateMany(
+      { chat: chatId, sender: { $ne: userId }, status: { $ne: 'read' } },
+      { $set: { status: 'read' } }
+    );
+    return res.json({ message: 'Messages marked read', modifiedCount: result.nModified || result.modifiedCount || 0 });
+  }
 });

@@ -28,7 +28,7 @@ const formatTimestamp = (timestamp) => {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
 
-const ContactItem = ({ contact, onSelect, effectiveTheme }) => {
+const ContactItem = ({ contact, onSelect, effectiveTheme, computedIsOnline }) => {
   const cleanText = (text) => {
     if (!text) return '';
     const s = typeof text === 'string' ? text : (text.content || text.text || '');
@@ -81,7 +81,6 @@ const ContactItem = ({ contact, onSelect, effectiveTheme }) => {
   // ✅ Dynamic icon color based on theme
   const iconColor = effectiveTheme.mode === 'dark' ? 'text-gray-400' : 'text-gray-600';
 const avatarSrc = contact?.avatar || "";
-console.log("Avatar src:", contact.avatar);
 const avatarFallbackText =
   contact?.chatName ||
   contact?.name ||
@@ -107,7 +106,7 @@ const avatarFallbackText =
   </div>
 )}
 
-          {contact.isOnline && (
+          {(typeof computedIsOnline !== 'undefined' ? computedIsOnline : contact.isOnline) && (
             <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white" />
           )}
         </div>
@@ -123,7 +122,7 @@ const avatarFallbackText =
           </div>
           
           <div className="flex items-center gap-2 min-w-0">
-            {lastMsgHasAttachments && (
+            {!contact.isTyping && lastMsgHasAttachments && (
               <div className="flex-shrink-0">
                 {(() => {
                   if (attachmentMime.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp)$/i.test(attachmentMime || attachmentFileName || lastMsgText)) {
@@ -142,8 +141,8 @@ const avatarFallbackText =
 
             <p className={`text-sm truncate ${effectiveTheme.textSecondary || "text-gray-500"}`}>
               {contact.isTyping ? (
-                "Typing..."
-              ) : (
+                  <span className="text-green-500 font-medium">Typing...</span>
+                ) : (
                 lastMsgHasAttachments ? (
                   lastMsgText ? `${lastMsgText}` : "Attachment"
                 ) : (
@@ -156,10 +155,15 @@ const avatarFallbackText =
       </div>
 
       {contact.unreadCount > 0 && (
-        <div className="flex-shrink-0 ml-3">
+        <div className="flex-shrink-0 ml-3 relative">
           <div className="w-5 h-5 rounded-full bg-red-500 text-white text-xs flex items-center justify-center font-semibold">
             {contact.unreadCount > 9 ? '9+' : contact.unreadCount}
           </div>
+          {((contact.mentionCount || contact.mentionsCount || 0) > 0) && (
+            <div className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-semibold">
+              @{(contact.mentionCount || contact.mentionsCount || 0) > 9 ? '9+' : (contact.mentionCount || contact.mentionsCount || 0)}
+            </div>
+          )}
         </div>
       )}
     </div>
